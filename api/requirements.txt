@@ -1,2 +1,2 @@
-azure-functions
+azure-functions==1.21.3
 google-genai==1.14.0
