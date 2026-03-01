@@ -39,5 +39,11 @@ yarn-error.log*
 Thumbs.db
 desktop.ini
 
+# Azure Functions
+api/__pycache__/
+api/.python_packages/
+api/.venv/
+api/local.settings.json
+
 # Misc
 *.log
