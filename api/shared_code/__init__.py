@@ -31,3 +31,56 @@ def build_contents(history, user_message):
         contents.append({"role": role, "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_message}]})
     return contents
+
+
+def classify_genai_error(exc: Exception):
+    """Best-effort classification of Google GenAI failures.
+
+    We avoid importing provider-specific exception types because the underlying
+    libraries can vary in Azure builds; string-matching is more robust.
+    """
+    text = (str(exc) or repr(exc)).strip()
+    upper = text.upper()
+
+    # Provider-side overload / temporary outage
+    if (
+        "503" in upper
+        or "UNAVAILABLE" in upper
+        or "HIGH DEMAND" in upper
+        or "CURRENTLY EXPERIENCING HIGH DEMAND" in upper
+    ):
+        return "provider_high_demand", text
+
+    # Usage limits / quota / rate limits
+    if (
+        "429" in upper
+        or "RESOURCE_EXHAUSTED" in upper
+        or "QUOTA" in upper
+        or "INSUFFICIENT" in upper
+        or "RATE LIMIT" in upper
+        or "TOO MANY REQUEST" in upper
+        or "LIMIT" in upper and "TOKEN" in upper
+    ):
+        return "usage_limit", text
+
+    return "unknown", text
+
+
+def user_facing_error_message(exc: Exception) -> str:
+    kind, _raw = classify_genai_error(exc)
+
+    if kind == "usage_limit":
+        return (
+            "Sorry — we just hit today's AI usage limit. "
+            "The a**hole who built this is too cheap to pay for more token usage. "
+            "Try again later (or tomorrow)."
+        )
+
+    if kind == "provider_high_demand":
+        return (
+            "Sorry — our AI provider is experiencing high demand right now. "
+            "Their servers are slammed, and my builder is too cheap to pay for higher availability. "
+            "A++holes both of them. Try again in a minute."
+        )
+
+    return "Sorry — the Court hit a technical snag. Please try again in a minute."

@@ -1,7 +1,7 @@
 import json
 import logging
 import azure.functions as func
-from shared_code import client, MODEL_NAME, build_contents
+from shared_code import client, MODEL_NAME, build_contents, classify_genai_error, user_facing_error_message
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -47,12 +47,19 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        logging.error(f"Chat error: {str(e)}")
+        kind, raw = classify_genai_error(e)
+        logging.error(f"Chat error ({kind}): {raw}")
+
+        status_code = 500
+        if kind == "usage_limit":
+            status_code = 429
+        elif kind == "provider_high_demand":
+            status_code = 503
+
         return func.HttpResponse(
             json.dumps({
-                "error": f"Something went catastrophically wrong: {str(e)}",
-                "suggestion": "Maybe try again? Or don't. I'm a chatbot, not your therapist.",
+                "error": user_facing_error_message(e),
             }),
-            status_code=500,
+            status_code=status_code,
             mimetype="application/json",
         )

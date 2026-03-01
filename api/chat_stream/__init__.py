@@ -1,7 +1,7 @@
 import json
 import logging
 import azure.functions as func
-from shared_code import client, MODEL_NAME, build_contents
+from shared_code import client, MODEL_NAME, build_contents, classify_genai_error, user_facing_error_message
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -54,8 +54,9 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        logging.error(f"Stream error: {str(e)}")
+        kind, raw = classify_genai_error(e)
+        logging.error(f"Stream error ({kind}): {raw}")
         return func.HttpResponse(
-            f"data: {json.dumps({'error': str(e)})}\n\n",
+            f"data: {json.dumps({'error': user_facing_error_message(e)})}\n\n",
             mimetype="text/event-stream",
         )
