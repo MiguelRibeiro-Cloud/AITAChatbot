@@ -5,7 +5,7 @@ from google import genai
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # Model config
-MODEL_NAME = "gemma-3-12b-it"
+MODEL_NAME = "gemma-4-26b-a4b-it"
 
 # System instruction
 SYSTEM_INSTRUCTION = (
