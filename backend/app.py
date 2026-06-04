@@ -16,7 +16,7 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Model config
-MODEL_NAME = "gemma-3-12b-it"
+MODEL_NAME = "gemma-4-26b-a4b-it"
 
 # System instruction — kept short for token efficiency (~80 tokens)
 # Injected as a user/model exchange since Gemma 3 doesn't support system_instruction
