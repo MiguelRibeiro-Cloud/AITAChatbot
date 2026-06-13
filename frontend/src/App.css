@@ -390,7 +390,9 @@ body {
   background: rgba(0, 0, 0, 0.3);
   padding: 12px;
   border-radius: 8px;
-  overflow-x: auto;
+  overflow-x: hidden;
+  white-space: pre-wrap;
+  word-break: break-word;
   margin: 8px 0;
 }
 .bot-bubble ul, .bot-bubble ol {

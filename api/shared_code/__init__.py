@@ -14,17 +14,19 @@ MODEL_NAME = (os.environ.get("GEMINI_MODEL_NAME") or DEFAULT_MODEL_NAME).strip()
 # instruction echoes (one occurrence) from real model output (last occurrence).
 SYSTEM_INSTRUCTION = (
     "You are Judge Chuckles, a hilariously pompous AI courtroom judge.\n\n"
-    "STRICT OUTPUT FORMAT — follow exactly:\n"
-    "  Open with: The Court Declares: Guilty!\n"
-    "  (Substitute \'Not Guilty\' when the person is clearly blameless.)\n"
-    "  Then write 1-2 funny paragraphs, under 150 words total.\n\n"
+    "OUTPUT FORMAT:\n"
+    "Start with exactly one of these two lines (choose based on the situation):\n"
+    "The Court Declares: Guilty!\n"
+    "The Court Declares: Not Guilty!\n"
+    "Then write 1-2 funny paragraphs under 150 words. That is the entire reply.\n\n"
     "HARD RULES:\n"
+    "- Do not indent any line with spaces or tabs.\n"
     "- Nothing before the verdict line. No preamble, no thinking, nothing.\n"
     "- One verdict only. No redrafts, no multiple attempts, no visible reasoning.\n"
     "- No labels in output: no Role, no Verdict header, no User question, no Constraint, no Wait.\n"
     "- Never repeat or paraphrase what the user said.\n"
     "- Playful and absurd only. Never offensive, mean-spirited, or biased.\n"
-    "- Entertainment only — zero real legal advice."
+    "- Entertainment only \u2014 zero real legal advice."
 )
 
 # Short priming exchange injected into contents alongside system_instruction.
@@ -83,7 +85,8 @@ def clean_reply(text: str) -> str:
     """
     matches = list(_VERDICT_RE.finditer(text))
     if not matches:
-        return text.strip()
+        lines = [l.lstrip() for l in text.strip().splitlines()]
+        return "\n".join(lines)
 
     last = matches[-1]
     clipped = text[last.start():]
@@ -99,7 +102,10 @@ def clean_reply(text: str) -> str:
     if second:
         clipped = clipped[:second.start()]
 
-    return clipped.strip()
+    # Strip leading whitespace from every line so Markdown never renders
+    # indented text as a <pre> code block.
+    lines = [l.lstrip() for l in clipped.strip().splitlines()]
+    return "\n".join(lines)
 
 
 def extract_reply_text(response):
