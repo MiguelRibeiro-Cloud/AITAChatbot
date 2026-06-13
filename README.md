@@ -106,6 +106,24 @@ AmItheAssohole/
 }
 ```
 
+### Error Codes
+
+The API can return the following HTTP status codes for chat endpoints (`/api/chat` and `/api/chat/stream`).
+
+| Status | Where | Brief Meaning | Possible Causes |
+|--------|-------|---------------|-----------------|
+| 400 | API validation | Bad request payload | Missing `message`, empty `message`, or message exceeds 10,000 characters. |
+| 401 | GenAI auth | AI credentials/permissions issue | Missing/invalid `GEMINI_API_KEY`, revoked key, or key lacks permission for the configured model/project. |
+| 429 | GenAI quota/rate | Usage limit reached | Provider quota exhausted, rate limit exceeded, or token usage cap reached. |
+| 502 | GenAI model lookup | Configured model unavailable | Wrong `GEMINI_MODEL_NAME`, model removed/deprecated, typo in model identifier, or model not enabled for the account. |
+| 503 | GenAI provider availability | Provider temporarily overloaded | Upstream provider high demand or temporary service unavailability. |
+| 500 | API internal | Unexpected server-side failure | Unclassified provider errors, runtime exceptions, malformed upstream responses, or unknown edge cases. |
+
+Notes:
+
+- `200` can still include the fallback text (`"I... I got nothing. My brain is empty. Like a coconut."`) when the provider call succeeds but returns empty text.
+- `/api/health` returns `200` when the API is alive; it does not validate GenAI key/model correctness.
+
 ## 🛠️ Tech Stack
 
 - **Backend:** Python, Flask, Flask-CORS, google-genai, python-dotenv
