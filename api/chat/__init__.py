@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 import azure.functions as func
 from shared_code import (
     COCONUT_FALLBACK,
@@ -13,13 +14,30 @@ from shared_code import (
 )
 
 
+def _debug_payload(stage, exc=None, empty_kind=None, response_empty=None):
+    return {
+        "stage": stage,
+        "type": type(exc).__name__ if exc else None,
+        "message": str(exc) if exc else None,
+        "model": MODEL_NAME,
+        "response_text_empty": bool(response_empty) if response_empty is not None else None,
+        "chunks_empty": None,
+        "empty_kind": empty_kind,
+    }
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """Send a message and get a response from Gemma 3 12B."""
     try:
         data = req.get_json()
         if not data or "message" not in data:
             return func.HttpResponse(
-                json.dumps({"error": "No message provided. Say something, coward!"}),
+                json.dumps(
+                    {
+                        "error": "No message provided. Say something, coward!",
+                        "debug": _debug_payload(stage="validation"),
+                    }
+                ),
                 status_code=400,
                 mimetype="application/json",
             )
@@ -27,14 +45,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         user_message = data["message"].strip()
         if not user_message:
             return func.HttpResponse(
-                json.dumps({"error": "Empty message? Really? Try harder."}),
+                json.dumps(
+                    {
+                        "error": "Empty message? Really? Try harder.",
+                        "debug": _debug_payload(stage="validation"),
+                    }
+                ),
                 status_code=400,
                 mimetype="application/json",
             )
 
         if len(user_message) > 10000:
             return func.HttpResponse(
-                json.dumps({"error": "That's a novel, not a message. Keep it under 10,000 characters."}),
+                json.dumps(
+                    {
+                        "error": "That's a novel, not a message. Keep it under 10,000 characters.",
+                        "debug": _debug_payload(stage="validation"),
+                    }
+                ),
                 status_code=400,
                 mimetype="application/json",
             )
@@ -57,6 +85,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 response_diagnostics(response),
             )
             reply = COCONUT_FALLBACK
+            return func.HttpResponse(
+                json.dumps(
+                    {
+                        "reply": reply,
+                        "model": MODEL_NAME,
+                        "debug": _debug_payload(
+                            stage="empty_response",
+                            empty_kind=empty_kind,
+                            response_empty=True,
+                        ),
+                    }
+                ),
+                mimetype="application/json",
+            )
 
         return func.HttpResponse(
             json.dumps({"reply": reply, "model": MODEL_NAME}),
@@ -64,6 +106,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
+        traceback.print_exc()
         kind, raw = classify_genai_error(e)
         logging.error(f"Chat error ({kind}): {raw}")
 
@@ -80,6 +123,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             json.dumps({
                 "error": user_facing_error_message(e),
+                "debug": _debug_payload(stage="genai_call", exc=e),
             }),
             status_code=status_code,
             mimetype="application/json",

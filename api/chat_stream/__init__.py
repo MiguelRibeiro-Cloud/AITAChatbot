@@ -1,5 +1,6 @@
 import json
 import logging
+import traceback
 import azure.functions as func
 from shared_code import (
     COCONUT_FALLBACK,
@@ -13,13 +14,30 @@ from shared_code import (
 )
 
 
+def _debug_payload(stage, exc=None, empty_kind=None, response_empty=None, chunks_empty=None):
+    return {
+        "stage": stage,
+        "type": type(exc).__name__ if exc else None,
+        "message": str(exc) if exc else None,
+        "model": MODEL_NAME,
+        "response_text_empty": bool(response_empty) if response_empty is not None else None,
+        "chunks_empty": bool(chunks_empty) if chunks_empty is not None else None,
+        "empty_kind": empty_kind,
+    }
+
+
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """Return response in SSE format for frontend compatibility."""
     try:
         data = req.get_json()
         if not data or "message" not in data:
             return func.HttpResponse(
-                json.dumps({"error": "No message provided."}),
+                json.dumps(
+                    {
+                        "error": "No message provided.",
+                        "debug": _debug_payload(stage="validation"),
+                    }
+                ),
                 status_code=400,
                 mimetype="application/json",
             )
@@ -27,14 +45,24 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         user_message = data["message"].strip()
         if not user_message:
             return func.HttpResponse(
-                json.dumps({"error": "Empty message."}),
+                json.dumps(
+                    {
+                        "error": "Empty message.",
+                        "debug": _debug_payload(stage="validation"),
+                    }
+                ),
                 status_code=400,
                 mimetype="application/json",
             )
 
         if len(user_message) > 10000:
             return func.HttpResponse(
-                json.dumps({"error": "Message too long. Keep it under 10,000 characters."}),
+                json.dumps(
+                    {
+                        "error": "Message too long. Keep it under 10,000 characters.",
+                        "debug": _debug_payload(stage="validation"),
+                    }
+                ),
                 status_code=400,
                 mimetype="application/json",
             )
@@ -58,8 +86,14 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
             reply = COCONUT_FALLBACK
 
+        chunk_present = bool(reply and reply.strip())
+
         # Return full response in SSE format — frontend SSE parser handles it correctly
-        sse_body = f"data: {json.dumps({'token': reply})}\n\ndata: {json.dumps({'done': True})}\n\n"
+        sse_body = (
+            f"data: {json.dumps({'debug': _debug_payload(stage='empty_response' if empty_kind else 'genai_call', empty_kind=empty_kind, response_empty=bool(empty_kind), chunks_empty=not chunk_present)})}\n\n"
+            f"data: {json.dumps({'token': reply})}\n\n"
+            f"data: {json.dumps({'done': True})}\n\n"
+        )
 
         return func.HttpResponse(
             sse_body,
@@ -71,6 +105,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
+        traceback.print_exc()
         kind, raw = classify_genai_error(e)
         logging.error(f"Stream error ({kind}): {raw}")
 
@@ -85,7 +120,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code = 502
 
         return func.HttpResponse(
-            f"data: {json.dumps({'error': user_facing_error_message(e)})}\n\n",
+            (
+                f"data: {json.dumps({'error': 'DEBUG_ERROR', 'stage': 'genai_call', 'type': type(e).__name__, 'message': str(e), 'model': MODEL_NAME, 'response_text_empty': None, 'chunks_empty': None, 'classified_kind': kind, 'user_error': user_facing_error_message(e)})}\n\n"
+                f"data: {json.dumps({'done': True})}\n\n"
+            ),
             status_code=status_code,
             mimetype="text/event-stream",
         )
