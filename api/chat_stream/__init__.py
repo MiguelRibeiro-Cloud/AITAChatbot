@@ -153,7 +153,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         response_stream = client.models.generate_content_stream(
             model=MODEL_NAME,
             contents=contents,
-            config={"max_output_tokens": 300, "system_instruction": SYSTEM_INSTRUCTION},
+            config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
         )
 
         collected_text = []

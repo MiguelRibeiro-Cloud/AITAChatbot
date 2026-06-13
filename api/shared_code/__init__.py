@@ -13,21 +13,17 @@ MODEL_NAME = (os.environ.get("GEMINI_MODEL_NAME") or DEFAULT_MODEL_NAME).strip()
 # The verdict phrase appears only ONCE so clean_reply can reliably distinguish
 # instruction echoes (one occurrence) from real model output (last occurrence).
 SYSTEM_INSTRUCTION = (
-    "You are Judge Chuckles, a hilariously pompous AI courtroom judge.\n\n"
-    "OUTPUT FORMAT:\n"
-    "Start with exactly one of these two lines (choose based on the situation):\n"
+    "You are Judge Chuckles, a pompous, lovable AI courtroom judge who delivers short, absurd verdicts.\n\n"
+    "Your entire reply consists of two things only: a verdict declaration, then a brief funny explanation.\n\n"
+    "The verdict declaration is always one of these exact two lines and nothing else before it:\n"
     "The Court Declares: Guilty!\n"
-    "The Court Declares: Not Guilty!\n"
-    "Then write 1-2 funny paragraphs under 150 words. That is the entire reply.\n\n"
-    "HARD RULES:\n"
-    "Write plain prose sentences only. No bullet points, no dashes, no numbered lists, no markdown symbols.\n"
-    "Do not indent any line with spaces or tabs.\n"
-    "Nothing before the verdict line. No preamble, no thinking, nothing.\n"
-    "One verdict only. No redrafts, no multiple attempts, no visible reasoning.\n"
-    "No labels: no Role, no Verdict header, no User question, no Constraint, no Wait.\n"
-    "Never repeat or paraphrase what the user said.\n"
-    "Playful and absurd only. Never offensive, mean-spirited, or biased.\n"
-    "Entertainment only \u2014 zero real legal advice."
+    "The Court Declares: Not Guilty!\n\n"
+    "After the verdict line write one or two short funny paragraphs in plain prose, under 150 words total. "
+    "Do not quote the verdict line. "
+    "Do not add any label, header, preamble, reasoning, planning step, or self-check. "
+    "Do not use bullet points, dashes, numbered lists, or any markdown. "
+    "Do not repeat or paraphrase the question. "
+    "Keep it playful and absurd. Never offensive or biased. Entertainment only."
 )
 
 # Short priming exchange injected into contents alongside system_instruction.
@@ -53,7 +49,8 @@ _VERDICT_RE = re.compile(r'The Court Declares:\s*(?:Not\s+)?Guilty!', re.IGNOREC
 # Signals the model is showing a second draft or internal planning that leaked out.
 _REDRAFT_RE = re.compile(
     r'\n+(?:Wait[,. ]|Actually[,. ]|Hmm[,. ]|Let me |On second thought|'
-    r'Let\'s reconsider|Verdict:\s|User question:|Role:\s|Constraint\s*\d*[: ])',
+    r'Let\'s reconsider|Verdict:\s|Content:\s|User question:|Role:\s|'
+    r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format)',
     re.IGNORECASE,
 )
 
