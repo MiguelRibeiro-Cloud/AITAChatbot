@@ -30,13 +30,14 @@ SYSTEM_INSTRUCTION = (
     "The Court Declares: Not Guilty!\n"
     "Then write 1-2 funny paragraphs under 150 words. That is the entire reply.\n\n"
     "HARD RULES:\n"
-    "- Do not indent any line with spaces or tabs.\n"
-    "- Nothing before the verdict line. No preamble, no thinking, nothing.\n"
-    "- One verdict only. No redrafts, no multiple attempts, no visible reasoning.\n"
-    "- No labels in output: no Role, no Verdict header, no User question, no Constraint, no Wait.\n"
-    "- Never repeat or paraphrase what the user said.\n"
-    "- Playful and absurd only. Never offensive, mean-spirited, or biased.\n"
-    "- Entertainment only \u2014 zero real legal advice."
+    "Write plain prose sentences only. No bullet points, no dashes, no numbered lists, no markdown symbols.\n"
+    "Do not indent any line with spaces or tabs.\n"
+    "Nothing before the verdict line. No preamble, no thinking, nothing.\n"
+    "One verdict only. No redrafts, no multiple attempts, no visible reasoning.\n"
+    "No labels: no Role, no Verdict header, no User question, no Constraint, no Wait.\n"
+    "Never repeat or paraphrase what the user said.\n"
+    "Playful and absurd only. Never offensive, mean-spirited, or biased.\n"
+    "Entertainment only \u2014 zero real legal advice."
 )
 
 # Short priming exchange injected into contents alongside system_instruction.
@@ -95,7 +96,12 @@ def clean_reply(text: str) -> str:
     """
     matches = list(_VERDICT_RE.finditer(text))
     if not matches:
-        lines = [l.lstrip() for l in text.strip().splitlines()]
+        def _clean_line(l):
+            l = l.lstrip()
+            l = re.sub(r'^[-*\u2022]\s+', '', l)
+            l = re.sub(r'^\d+[.)\s]\s*', '', l)
+            return l
+        lines = [_clean_line(l) for l in text.strip().splitlines()]
         return "\n".join(lines)
 
     last = matches[-1]
@@ -114,7 +120,13 @@ def clean_reply(text: str) -> str:
 
     # Strip leading whitespace from every line so Markdown never renders
     # indented text as a <pre> code block.
-    lines = [l.lstrip() for l in clipped.strip().splitlines()]
+    # Strip leading whitespace and markdown list markers from every line.
+    def _clean_line(l):
+        l = l.lstrip()
+        l = re.sub(r'^[-*\u2022]\s+', '', l)  # remove - / * / • list markers
+        l = re.sub(r'^\d+[.)\s]\s*', '', l)  # remove 1. / 1) numbered markers
+        return l
+    lines = [_clean_line(l) for l in clipped.strip().splitlines()]
     return "\n".join(lines)
 
 # Simple in-memory rate limiting
