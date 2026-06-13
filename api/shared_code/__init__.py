@@ -5,7 +5,8 @@ from google import genai
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # Model config
-MODEL_NAME = "gemma-4-26b-a4b-it"
+DEFAULT_MODEL_NAME = "gemma-4-26b-a4b-it"
+MODEL_NAME = (os.environ.get("GEMINI_MODEL_NAME") or DEFAULT_MODEL_NAME).strip() or DEFAULT_MODEL_NAME
 
 # System instruction
 SYSTEM_INSTRUCTION = (
@@ -18,6 +19,8 @@ SYSTEM_INSTRUCTION = (
 )
 
 SYSTEM_ACK = "Understood! I'm Judge Chuckles, ready to deliver silly verdicts. Every reply starts with 'The Court Declares: Guilty!' or 'Not Guilty!' followed by a short, funny explanation. Let's go!"
+
+COCONUT_FALLBACK = "I... I got nothing. My brain is empty. Like a coconut."
 
 
 def build_contents(history, user_message):
@@ -33,6 +36,40 @@ def build_contents(history, user_message):
     return contents
 
 
+def extract_reply_text(response):
+    """Return (reply_text, empty_kind) where empty_kind is None when text is usable."""
+    text = getattr(response, "text", None)
+
+    if isinstance(text, str):
+        cleaned = text.strip()
+        if cleaned:
+            return cleaned, None
+        return "", "blank_text"
+
+    if text is None:
+        return "", "missing_text"
+
+    rendered = str(text).strip()
+    if rendered:
+        return rendered, None
+    return "", "non_string_empty"
+
+
+def response_diagnostics(response):
+    """Collect safe response shape metadata for logging empty-output cases."""
+    text = getattr(response, "text", None)
+    candidates = getattr(response, "candidates", None)
+
+    diag = {
+        "has_text_attr": hasattr(response, "text"),
+        "text_type": type(text).__name__,
+        "text_length": len(text) if isinstance(text, str) else None,
+        "has_candidates_attr": hasattr(response, "candidates"),
+        "candidate_count": len(candidates) if isinstance(candidates, list) else None,
+    }
+    return diag
+
+
 def classify_genai_error(exc: Exception):
     """Best-effort classification of Google GenAI failures.
 
@@ -41,6 +78,28 @@ def classify_genai_error(exc: Exception):
     """
     text = (str(exc) or repr(exc)).strip()
     upper = text.upper()
+
+    # Authentication / authorization issues
+    if (
+        "401" in upper
+        or "403" in upper
+        or "UNAUTHENTICATED" in upper
+        or "UNAUTHORIZED" in upper
+        or "PERMISSION_DENIED" in upper
+        or "INVALID API KEY" in upper
+        or "API_KEY_INVALID" in upper
+    ):
+        return "auth_or_permission", text
+
+    # Model/deployment lookup failures
+    if (
+        "404" in upper
+        or "NOT_FOUND" in upper
+        or "MODEL_NOT_FOUND" in upper
+        or "NO SUCH MODEL" in upper
+        or "UNKNOWN MODEL" in upper
+    ):
+        return "model_not_found", text
 
     # Provider-side overload / temporary outage
     if (
@@ -81,6 +140,18 @@ def user_facing_error_message(exc: Exception) -> str:
             "Sorry — our AI provider is experiencing high demand right now. "
             "Their servers are slammed, and my builder is too cheap to pay for higher availability. "
             "A++holes both of them. Try again in a minute."
+        )
+
+    if kind == "auth_or_permission":
+        return (
+            "Sorry — the AI service credentials look invalid or missing in this environment. "
+            "Please ask the maintainer to check production secrets."
+        )
+
+    if kind == "model_not_found":
+        return (
+            "Sorry — the configured AI model could not be found. "
+            "Please ask the maintainer to verify the deployed model name."
         )
 
     return "Sorry — the Court hit a technical snag. Please try again in a minute."

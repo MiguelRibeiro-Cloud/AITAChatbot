@@ -1,7 +1,16 @@
 import json
 import logging
 import azure.functions as func
-from shared_code import client, MODEL_NAME, build_contents, classify_genai_error, user_facing_error_message
+from shared_code import (
+    COCONUT_FALLBACK,
+    MODEL_NAME,
+    build_contents,
+    classify_genai_error,
+    client,
+    extract_reply_text,
+    response_diagnostics,
+    user_facing_error_message,
+)
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -39,7 +48,15 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             config={"max_output_tokens": 300},
         )
 
-        reply = response.text if response.text else "I... I got nothing. My brain is empty. Like a coconut."
+        reply, empty_kind = extract_reply_text(response)
+        if empty_kind:
+            logging.warning(
+                "Empty GenAI response fallback used: model=%s empty_kind=%s diagnostics=%s",
+                MODEL_NAME,
+                empty_kind,
+                response_diagnostics(response),
+            )
+            reply = COCONUT_FALLBACK
 
         return func.HttpResponse(
             json.dumps({"reply": reply, "model": MODEL_NAME}),
@@ -55,6 +72,10 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code = 429
         elif kind == "provider_high_demand":
             status_code = 503
+        elif kind == "auth_or_permission":
+            status_code = 401
+        elif kind == "model_not_found":
+            status_code = 502
 
         return func.HttpResponse(
             json.dumps({
