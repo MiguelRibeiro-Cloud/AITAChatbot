@@ -19,36 +19,63 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 # Model config
 MODEL_NAME = "gemma-4-26b-a4b-it"
 
-# System instruction — passed via config.system_instruction (Gemma 4 native support).
-# Explicitly forbids echoing prompt structure or showing internal planning/drafts.
+# System instruction — passed via config.system_instruction.
+# The verdict phrase appears only ONCE so clean_reply can reliably distinguish
+# instruction echoes (one occurrence) from real model output (last occurrence).
 SYSTEM_INSTRUCTION = (
-    "You are Judge Chuckles, a ridiculous courtroom judge who renders absurd moral verdicts. "
-    "Follow these rules exactly:\n"
-    "1. Begin EVERY reply with exactly 'The Court Declares: Guilty!' or 'The Court Declares: Not Guilty!' — no other opening, no preamble.\n"
-    "2. Follow immediately with a funny 1–2 paragraph explanation, under 150 words total.\n"
-    "3. Output only the final verdict and explanation. Never show planning, analysis, multiple drafts, or reasoning steps.\n"
-    "4. Never repeat or paraphrase the user's question back to them.\n"
-    "5. Never include labels like 'Role:', 'Verdict:', 'User question:', 'Constraint:', 'Wait...', or any internal structure.\n"
-    "6. Be playful and absurd — courtroom comedy. Never offensive, mean-spirited, or biased toward any group.\n"
-    "7. Entertainment only. No real legal or life advice."
+    "You are Judge Chuckles, a hilariously pompous AI courtroom judge.\n\n"
+    "STRICT OUTPUT FORMAT — follow exactly:\n"
+    "  Open with: The Court Declares: Guilty!\n"
+    "  (Substitute \'Not Guilty\' when the person is clearly blameless.)\n"
+    "  Then write 1-2 funny paragraphs, under 150 words total.\n\n"
+    "HARD RULES:\n"
+    "- Nothing before the verdict line. No preamble, no thinking, nothing.\n"
+    "- One verdict only. No redrafts, no multiple attempts, no visible reasoning.\n"
+    "- No labels in output: no Role, no Verdict header, no User question, no Constraint, no Wait.\n"
+    "- Never repeat or paraphrase what the user said.\n"
+    "- Playful and absurd only. Never offensive, mean-spirited, or biased.\n"
+    "- Entertainment only — zero real legal advice."
 )
 
-# Patterns that signal the model is showing a second draft or internal reasoning.
+# Short priming exchange injected into contents alongside system_instruction.
+# Deliberately avoids 'The Court Declares:' so clean_reply can use the LAST
+# verdict match as the real answer, even if the model echoes the instruction first.
+_PRIMING_INSTRUCTION = (
+    "You play Judge Chuckles, a silly AI judge. "
+    "Open each reply with a one-line guilty-or-not verdict declaration, "
+    "then add a short funny reason (under 150 words total). "
+    "Output only the final answer — no preamble, no labels, no planning, no drafts."
+)
+_PRIMING_ACK = (
+    "Got it! I\'m Judge Chuckles. I\'ll open with a verdict declaration and keep it short, absurd, and fun."
+)
+
+COCONUT_FALLBACK = "I... I got nothing. My brain is empty. Like a coconut."
+
+# Matches a complete verdict declaration in either guilty or not-guilty form.
+# More specific than 'The Court Declares:' alone, which can appear twice inside
+# an echoed instruction and cause the old first-match strategy to clip mid-phrase.
+_VERDICT_RE = re.compile(r'The Court Declares:\s*(?:Not\s+)?Guilty!', re.IGNORECASE)
+
+# Signals the model is showing a second draft or internal planning that leaked out.
 _REDRAFT_RE = re.compile(
     r'\n+(?:Wait[,. ]|Actually[,. ]|Hmm[,. ]|Let me |On second thought|'
-    r"Let's reconsider|Verdict:|User question:|Role:|Constraint\s*\d*[: ])",
+    r'Let\'s reconsider|Verdict:\s|User question:|Role:\s|Constraint\s*\d*[: ])',
     re.IGNORECASE,
 )
 
 
 def build_contents(history, user_message):
-    """Build contents from history + current message only.
+    """Build contents with a short priming exchange that avoids the verdict phrase.
 
-    System persona is passed separately via config.system_instruction — do NOT
-    inject it here as a fake user/model exchange, as that causes Gemma 4 to echo
-    the instruction labels back in its output.
+    Full persona rules go in config.system_instruction. The priming exchange gives
+    an extra behavioral cue without containing 'The Court Declares:', so
+    clean_reply can always locate the real verdict via the last regex match.
     """
-    contents = []
+    contents = [
+        {"role": "user", "parts": [{"text": _PRIMING_INSTRUCTION}]},
+        {"role": "model", "parts": [{"text": _PRIMING_ACK}]},
+    ]
     for msg in history:
         role = "user" if msg["role"] == "user" else "model"
         contents.append({"role": role, "parts": [{"text": msg["content"]}]})
@@ -57,28 +84,32 @@ def build_contents(history, user_message):
 
 
 def clean_reply(text: str) -> str:
-    """Trim noise before/after the actual verdict.
+    """Trim everything outside the actual verdict.
 
-    1. Drop everything before the first 'The Court Declares:'.
-    2. Cut at any re-draft marker (second draft, planning leakage).
-    3. Cut at a second 'The Court Declares:' occurrence (model looping).
+    Uses the LAST complete verdict match as the start of the real answer.
+    If the model echoes the system instruction (one verdict phrase) before giving
+    the real verdict, the last match is the real one. Then cuts at re-draft /
+    planning-leak markers and a second verdict declaration (model looping).
     """
-    marker = "The Court Declares:"
-    idx = text.find(marker)
-    if idx == -1:
+    matches = list(_VERDICT_RE.finditer(text))
+    if not matches:
         return text.strip()
 
-    text = text[idx:]
+    last = matches[-1]
+    clipped = text[last.start():]
 
-    m = _REDRAFT_RE.search(text)
-    if m:
-        text = text[:m.start()]
+    # Cut at re-draft / planning-leak markers
+    redraft = _REDRAFT_RE.search(clipped)
+    if redraft:
+        clipped = clipped[:redraft.start()]
 
-    second = text.find(marker, len(marker))
-    if second != -1:
-        text = text[:second]
+    # Cut before a second verdict in the clipped portion (model looping)
+    first_end = last.end() - last.start()
+    second = _VERDICT_RE.search(clipped, first_end)
+    if second:
+        clipped = clipped[:second.start()]
 
-    return text.strip()
+    return clipped.strip()
 
 # Simple in-memory rate limiting
 _rate_limit = {}
