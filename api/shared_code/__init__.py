@@ -1,4 +1,5 @@
 import os
+import re
 from google import genai
 
 # Initialize the Gemini client with the API key
@@ -8,32 +9,71 @@ client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 DEFAULT_MODEL_NAME = "gemma-4-26b-a4b-it"
 MODEL_NAME = (os.environ.get("GEMINI_MODEL_NAME") or DEFAULT_MODEL_NAME).strip() or DEFAULT_MODEL_NAME
 
-# System instruction
+# System instruction — passed via config.system_instruction (Gemma 4 native support).
+# Explicitly forbids echoing prompt structure or showing internal planning/drafts.
 SYSTEM_INSTRUCTION = (
-    "You are a silly courtroom judge. "
-    "Every reply MUST start with exactly 'The Court Declares: Guilty!' or 'The Court Declares: Not Guilty!' based on the situation. "
-    "Then give a brief, humorous 1-2 paragraph explanation (under 150 words). "
-    "Be playful and teasing but never offensive, mean-spirited, or biased toward any group. "
-    "Keep it lighthearted and absurd — like a courtroom comedy. "
-    "Never give real advice. This is entertainment only."
+    "You are Judge Chuckles, a ridiculous courtroom judge who renders absurd moral verdicts. "
+    "Follow these rules exactly:\n"
+    "1. Begin EVERY reply with exactly 'The Court Declares: Guilty!' or 'The Court Declares: Not Guilty!' — no other opening, no preamble.\n"
+    "2. Follow immediately with a funny 1–2 paragraph explanation, under 150 words total.\n"
+    "3. Output only the final verdict and explanation. Never show planning, analysis, multiple drafts, or reasoning steps.\n"
+    "4. Never repeat or paraphrase the user's question back to them.\n"
+    "5. Never include labels like 'Role:', 'Verdict:', 'User question:', 'Constraint:', 'Wait...', or any internal structure.\n"
+    "6. Be playful and absurd — courtroom comedy. Never offensive, mean-spirited, or biased toward any group.\n"
+    "7. Entertainment only. No real legal or life advice."
 )
-
-SYSTEM_ACK = "Understood! I'm Judge Chuckles, ready to deliver silly verdicts. Every reply starts with 'The Court Declares: Guilty!' or 'Not Guilty!' followed by a short, funny explanation. Let's go!"
 
 COCONUT_FALLBACK = "I... I got nothing. My brain is empty. Like a coconut."
 
+# Patterns that signal the model has started a second draft or is showing internal reasoning.
+_REDRAFT_RE = re.compile(
+    r'\n+(?:Wait[,. ]|Actually[,. ]|Hmm[,. ]|Let me |On second thought|'
+    r'Let\'s reconsider|Verdict:|User question:|Role:|Constraint\s*\d*[: ])',
+    re.IGNORECASE,
+)
+
 
 def build_contents(history, user_message):
-    """Build the contents array with system prompt injected as first exchange."""
-    contents = [
-        {"role": "user", "parts": [{"text": SYSTEM_INSTRUCTION}]},
-        {"role": "model", "parts": [{"text": SYSTEM_ACK}]},
-    ]
+    """Build the contents array from conversation history + current user message.
+
+    System persona is passed separately via config.system_instruction — do NOT
+    inject it here as a fake user/model exchange, as that causes Gemma 4 to echo
+    the instruction labels back in its output.
+    """
+    contents = []
     for msg in history:
         role = "user" if msg["role"] == "user" else "model"
         contents.append({"role": role, "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_message}]})
     return contents
+
+
+def clean_reply(text: str) -> str:
+    """Trim noise before/after the actual verdict.
+
+    1. Drop everything before the first 'The Court Declares:'.
+    2. Cut at any re-draft marker (second draft, planning leakage).
+    3. Cut at a second 'The Court Declares:' occurrence (model looping).
+    """
+    marker = "The Court Declares:"
+    idx = text.find(marker)
+    if idx == -1:
+        # Model didn't follow the format — return as-is and let the caller decide.
+        return text.strip()
+
+    text = text[idx:]
+
+    # Stop at re-draft / planning leakage
+    m = _REDRAFT_RE.search(text)
+    if m:
+        text = text[:m.start()]
+
+    # Stop at a second verdict declaration (model started looping)
+    second = text.find(marker, len(marker))
+    if second != -1:
+        text = text[:second]
+
+    return text.strip()
 
 
 def extract_reply_text(response):

@@ -5,8 +5,10 @@ import azure.functions as func
 from shared_code import (
     COCONUT_FALLBACK,
     MODEL_NAME,
+    SYSTEM_INSTRUCTION,
     build_contents,
     classify_genai_error,
+    clean_reply,
     client,
     user_facing_error_message,
 )
@@ -151,7 +153,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         response_stream = client.models.generate_content_stream(
             model=MODEL_NAME,
             contents=contents,
-            config={"max_output_tokens": 300},
+            config={"max_output_tokens": 300, "system_instruction": SYSTEM_INSTRUCTION},
         )
 
         collected_text = []
@@ -171,7 +173,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             if text:
                 collected_text.append(text)
 
-        reply = "".join(collected_text).strip()
+        reply = clean_reply("".join(collected_text).strip())
 
         if not reply:
             # No text extracted from any chunk — surface full debug info in SSE

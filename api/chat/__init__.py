@@ -5,8 +5,10 @@ import azure.functions as func
 from shared_code import (
     COCONUT_FALLBACK,
     MODEL_NAME,
+    SYSTEM_INSTRUCTION,
     build_contents,
     classify_genai_error,
+    clean_reply,
     client,
     extract_reply_text,
     response_diagnostics,
@@ -73,7 +75,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=contents,
-            config={"max_output_tokens": 300},
+            config={"max_output_tokens": 300, "system_instruction": SYSTEM_INSTRUCTION},
         )
 
         reply, empty_kind = extract_reply_text(response)
@@ -99,6 +101,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 ),
                 mimetype="application/json",
             )
+
+        reply = clean_reply(reply)
 
         return func.HttpResponse(
             json.dumps({"reply": reply, "model": MODEL_NAME}),
