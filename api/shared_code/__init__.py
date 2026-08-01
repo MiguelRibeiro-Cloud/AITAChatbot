@@ -1,6 +1,9 @@
 import os
 import re
+import threading
 from google import genai
+
+from .llm_provider_router import LLMProviderRouter
 
 # Initialize the Gemini client with the API key
 client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
@@ -40,6 +43,8 @@ _PRIMING_ACK = (
 )
 
 COCONUT_FALLBACK = "I... I got nothing. My brain is empty. Like a coconut."
+_llm_provider_router = None
+_llm_provider_router_lock = threading.Lock()
 
 # Matches a complete verdict declaration in either guilty or not-guilty form.
 # More specific than 'The Court Declares:' alone, which can appear twice inside
@@ -71,6 +76,52 @@ def build_contents(history, user_message):
         contents.append({"role": role, "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_message}]})
     return contents
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def llm_provider_router_enabled():
+    """The router is opt-in so the Google AI Studio implementation is unchanged."""
+    return (
+        _env_bool("LLM_PROVIDER_ROUTER_ENABLED")
+        or _env_bool("LLM_ROUTER_ENABLED")
+    )
+
+
+def build_provider_messages(history, user_message):
+    """Build OpenAI-compatible messages for the multi-provider router."""
+    messages = [
+        {"role": "system", "content": SYSTEM_INSTRUCTION},
+        {"role": "user", "content": _PRIMING_INSTRUCTION},
+        {"role": "assistant", "content": _PRIMING_ACK},
+    ]
+    for msg in history:
+        role = "user" if msg["role"] == "user" else "assistant"
+        messages.append({"role": role, "content": msg["content"]})
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def get_llm_provider_router():
+    global _llm_provider_router
+    if _llm_provider_router is None:
+        with _llm_provider_router_lock:
+            if _llm_provider_router is None:
+                _llm_provider_router = LLMProviderRouter.from_env()
+    return _llm_provider_router
+
+
+def generate_with_provider_router(history, user_message, max_tokens=500):
+    router = get_llm_provider_router()
+    return router.chat(
+        build_provider_messages(history, user_message),
+        max_tokens=max_tokens,
+    )
 
 
 def clean_reply(text: str) -> str:
@@ -169,6 +220,15 @@ def classify_genai_error(exc: Exception):
         or "PERMISSION_DENIED" in upper
         or "INVALID API KEY" in upper
         or "API_KEY_INVALID" in upper
+    ):
+        return "auth_or_permission", text
+
+    if (
+        "NO USABLE PROVIDER" in upper
+        or "NO CANDIDATES MATCHED" in upper
+        or "UNKNOWN PROVIDER" in upper
+        or "MUST BE TRUE/FALSE" in upper
+        or "MUST BE PRIORITY OR ROUND_ROBIN" in upper
     ):
         return "auth_or_permission", text
 

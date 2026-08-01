@@ -1,12 +1,20 @@
 import os
 import re
 import json
+import sys
 import time
 import traceback
+from pathlib import Path
 from flask import Flask, request, jsonify, Response, stream_with_context
 from flask_cors import CORS
 from dotenv import load_dotenv
 from google import genai
+
+API_DIR = Path(__file__).resolve().parents[1] / "api"
+if str(API_DIR) not in sys.path:
+    sys.path.append(str(API_DIR))
+
+from shared_code.llm_provider_router import LLMProviderRouter
 
 load_dotenv()
 
@@ -50,6 +58,8 @@ _PRIMING_ACK = (
 )
 
 COCONUT_FALLBACK = "I... I got nothing. My brain is empty. Like a coconut."
+_llm_provider_router = None
+_llm_provider_router_lock = None
 
 # Matches a complete verdict declaration in either guilty or not-guilty form.
 # More specific than 'The Court Declares:' alone, which can appear twice inside
@@ -81,6 +91,53 @@ def build_contents(history, user_message):
         contents.append({"role": role, "parts": [{"text": msg["content"]}]})
     contents.append({"role": "user", "parts": [{"text": user_message}]})
     return contents
+
+
+def _env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def llm_provider_router_enabled():
+    return (
+        _env_bool("LLM_PROVIDER_ROUTER_ENABLED")
+        or _env_bool("LLM_ROUTER_ENABLED")
+    )
+
+
+def build_provider_messages(history, user_message):
+    messages = [
+        {"role": "system", "content": SYSTEM_INSTRUCTION},
+        {"role": "user", "content": _PRIMING_INSTRUCTION},
+        {"role": "assistant", "content": _PRIMING_ACK},
+    ]
+    for msg in history:
+        role = "user" if msg["role"] == "user" else "assistant"
+        messages.append({"role": role, "content": msg["content"]})
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def get_llm_provider_router():
+    global _llm_provider_router, _llm_provider_router_lock
+    if _llm_provider_router_lock is None:
+        import threading
+        _llm_provider_router_lock = threading.Lock()
+
+    if _llm_provider_router is None:
+        with _llm_provider_router_lock:
+            if _llm_provider_router is None:
+                _llm_provider_router = LLMProviderRouter.from_env()
+    return _llm_provider_router
+
+
+def generate_with_provider_router(history, user_message, max_tokens=500):
+    return get_llm_provider_router().chat(
+        build_provider_messages(history, user_message),
+        max_tokens=max_tokens,
+    )
 
 
 def clean_reply(text: str) -> str:
@@ -172,19 +229,33 @@ def chat():
         history = data.get("history", [])
         contents = build_contents(history, user_message)
 
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=contents,
-            config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
-        )
+        using_provider_router = llm_provider_router_enabled()
+        if using_provider_router:
+            provider_response = generate_with_provider_router(
+                history,
+                user_message,
+                max_tokens=500,
+            )
+            raw = provider_response.text if provider_response.text else COCONUT_FALLBACK
+            reply = clean_reply(raw) if provider_response.text else raw
+            response_model = provider_response.model
+            response_provider = provider_response.provider
+        else:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=contents,
+                config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
+            )
+            raw = response.text if response.text else "I... I got nothing. My brain is empty. Like a coconut."
+            reply = clean_reply(raw) if response.text else raw
+            response_model = MODEL_NAME
+            response_provider = "google-ai-studio"
 
-        raw = response.text if response.text else "I... I got nothing. My brain is empty. Like a coconut."
-        reply = clean_reply(raw) if response.text else raw
+        payload = {"reply": reply, "model": response_model}
+        if using_provider_router:
+            payload["provider"] = response_provider
 
-        return jsonify({
-            "reply": reply,
-            "model": MODEL_NAME,
-        })
+        return jsonify(payload)
 
     except Exception as e:
         traceback.print_exc()
@@ -217,16 +288,24 @@ def chat_stream():
 
         def generate():
             try:
-                response_stream = client.models.generate_content_stream(
-                    model=MODEL_NAME,
-                    contents=contents,
-                    config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
-                )
-                collected = []
-                for chunk in response_stream:
-                    if chunk.text:
-                        collected.append(chunk.text)
-                reply = clean_reply("".join(collected).strip()) or "I... I got nothing. My brain is empty. Like a coconut."
+                if llm_provider_router_enabled():
+                    provider_response = generate_with_provider_router(
+                        history,
+                        user_message,
+                        max_tokens=500,
+                    )
+                    reply = clean_reply(provider_response.text.strip()) if provider_response.text.strip() else COCONUT_FALLBACK
+                else:
+                    response_stream = client.models.generate_content_stream(
+                        model=MODEL_NAME,
+                        contents=contents,
+                        config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
+                    )
+                    collected = []
+                    for chunk in response_stream:
+                        if chunk.text:
+                            collected.append(chunk.text)
+                    reply = clean_reply("".join(collected).strip()) or "I... I got nothing. My brain is empty. Like a coconut."
                 yield f"data: {json.dumps({'token': reply})}\n\n"
                 yield f"data: {json.dumps({'done': True})}\n\n"
             except Exception as e:

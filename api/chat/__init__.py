@@ -11,21 +11,26 @@ from shared_code import (
     clean_reply,
     client,
     extract_reply_text,
+    generate_with_provider_router,
+    llm_provider_router_enabled,
     response_diagnostics,
     user_facing_error_message,
 )
 
 
-def _debug_payload(stage, exc=None, empty_kind=None, response_empty=None):
-    return {
+def _debug_payload(stage, exc=None, empty_kind=None, response_empty=None, model=None, provider=None):
+    payload = {
         "stage": stage,
         "type": type(exc).__name__ if exc else None,
         "message": str(exc) if exc else None,
-        "model": MODEL_NAME,
+        "model": model or MODEL_NAME,
         "response_text_empty": bool(response_empty) if response_empty is not None else None,
         "chunks_empty": None,
         "empty_kind": empty_kind,
     }
+    if provider is not None:
+        payload["provider"] = provider
+    return payload
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -72,42 +77,72 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         history = data.get("history", [])
         contents = build_contents(history, user_message)
 
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=contents,
-            config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
-        )
+        using_provider_router = llm_provider_router_enabled()
+        if using_provider_router:
+            provider_response = generate_with_provider_router(
+                history,
+                user_message,
+                max_tokens=500,
+            )
+            raw_text = provider_response.text
+            reply, empty_kind = (
+                (raw_text.strip(), None)
+                if isinstance(raw_text, str) and raw_text.strip()
+                else ("", "blank_text")
+            )
+            response_model = provider_response.model
+            response_provider = provider_response.provider
+            diagnostics = {
+                "provider": response_provider,
+                "model": response_model,
+                "key_slot": provider_response.key_slot,
+            }
+        else:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=contents,
+                config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
+            )
+            reply, empty_kind = extract_reply_text(response)
+            response_model = MODEL_NAME
+            response_provider = "google-ai-studio"
+            diagnostics = response_diagnostics(response)
 
-        reply, empty_kind = extract_reply_text(response)
         if empty_kind:
             logging.warning(
-                "Empty GenAI response fallback used: model=%s empty_kind=%s diagnostics=%s",
-                MODEL_NAME,
+                "Empty LLM response fallback used: provider=%s model=%s empty_kind=%s diagnostics=%s",
+                response_provider,
+                response_model,
                 empty_kind,
-                response_diagnostics(response),
+                diagnostics,
             )
             reply = COCONUT_FALLBACK
             return func.HttpResponse(
-                json.dumps(
-                    {
-                        "reply": reply,
-                        "model": MODEL_NAME,
-                        "debug": _debug_payload(
-                            stage="empty_response",
-                            empty_kind=empty_kind,
-                            response_empty=True,
-                        ),
-                    }
+                json.dumps({
+                    **(
+                        {"reply": reply, "model": response_model, "provider": response_provider}
+                        if using_provider_router
+                        else {"reply": reply, "model": response_model}
+                    ),
+                    "debug": _debug_payload(
+                        stage="empty_response",
+                        empty_kind=empty_kind,
+                        response_empty=True,
+                        model=response_model,
+                        provider=response_provider if using_provider_router else None,
+                    ),
+                }
                 ),
                 mimetype="application/json",
             )
 
         reply = clean_reply(reply)
 
-        return func.HttpResponse(
-            json.dumps({"reply": reply, "model": MODEL_NAME}),
-            mimetype="application/json",
-        )
+        payload = {"reply": reply, "model": response_model}
+        if using_provider_router:
+            payload["provider"] = response_provider
+
+        return func.HttpResponse(json.dumps(payload), mimetype="application/json")
 
     except Exception as e:
         traceback.print_exc()

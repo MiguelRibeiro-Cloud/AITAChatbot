@@ -1,0 +1,127 @@
+# Copy to backend/.env for Flask local development, or translate these values
+# into Azure Function App settings/local.settings.json for the Azure API.
+#
+# Existing Google AI Studio path:
+# - Leave LLM_PROVIDER_ROUTER_ENABLED=false to keep the current implementation.
+# - Fill GEMINI_API_KEY and optionally GEMINI_MODEL_NAME as before.
+
+GEMINI_API_KEY=
+GEMINI_MODEL_NAME=
+
+
+# -------------------- Optional multi-provider LLM router --------------------
+
+# false keeps the existing Google AI Studio SDK implementation active.
+# true routes chat calls through OpenAI-compatible provider APIs below.
+LLM_PROVIDER_ROUTER_ENABLED=false
+
+# Alias also supported by the code if you prefer the shorter name.
+LLM_ROUTER_ENABLED=false
+
+# priority: always prefer the first healthy candidate in LLM_PROVIDER_ORDER.
+# round_robin: rotate after each successful request while retaining failover.
+ROUTER_MODE=priority
+
+LLM_PROVIDER_ORDER=google,groq,mistral,openrouter,cloudflare,cohere,nvidia,huggingface,sambanova,fireworks
+
+# A failed key/provider is skipped for this many seconds.
+ROUTER_COOLDOWN_SECONDS=300
+
+# Per-request network timeout.
+ROUTER_TIMEOUT_SECONDS=60
+
+# 0 means try every eligible candidate. A positive number caps attempts/call.
+ROUTER_MAX_ATTEMPTS=0
+
+# Maximum provider error text retained in exceptions/logs.
+ROUTER_MAX_ERROR_BODY_CHARS=600
+
+# DEBUG, INFO, WARNING, ERROR, or CRITICAL.
+ROUTER_LOG_LEVEL=WARNING
+
+
+# ------------------------ Google AI Studio / Gemini -------------------------
+
+GOOGLE_ENABLED=true
+GOOGLE_API_KEYS=
+GOOGLE_MODEL=
+GOOGLE_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+
+
+# ----------------------------------- Groq -----------------------------------
+
+GROQ_ENABLED=true
+GROQ_API_KEYS=
+GROQ_MODEL=
+GROQ_BASE_URL=https://api.groq.com/openai/v1
+
+
+# --------------------------------- Mistral ----------------------------------
+
+MISTRAL_ENABLED=true
+MISTRAL_API_KEYS=
+MISTRAL_MODEL=
+MISTRAL_BASE_URL=https://api.mistral.ai/v1
+
+
+# -------------------------------- OpenRouter --------------------------------
+
+OPENROUTER_ENABLED=true
+OPENROUTER_API_KEYS=
+OPENROUTER_MODEL=
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+
+# Optional OpenRouter attribution headers.
+OPENROUTER_HTTP_REFERER=
+OPENROUTER_X_TITLE=AITA Chatbot
+
+
+# -------------------------- Cloudflare Workers AI ---------------------------
+
+CLOUDFLARE_ENABLED=true
+CLOUDFLARE_API_KEYS=
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_MODEL=
+
+# Keep {account_id}; the router substitutes CLOUDFLARE_ACCOUNT_ID.
+CLOUDFLARE_BASE_URL=https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1
+
+
+# ---------------------------------- Cohere ----------------------------------
+
+COHERE_ENABLED=true
+COHERE_API_KEYS=
+COHERE_MODEL=
+COHERE_BASE_URL=https://api.cohere.ai/compatibility/v1
+
+
+# -------------------------------- NVIDIA NIM --------------------------------
+
+NVIDIA_ENABLED=true
+NVIDIA_API_KEYS=
+NVIDIA_MODEL=
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+
+
+# ---------------------- Hugging Face Inference Providers --------------------
+
+HUGGINGFACE_ENABLED=true
+HUGGINGFACE_API_KEYS=
+HUGGINGFACE_MODEL=
+HUGGINGFACE_BASE_URL=https://router.huggingface.co/v1
+
+
+# ------------------------------ SambaNova Cloud -----------------------------
+
+SAMBANOVA_ENABLED=true
+SAMBANOVA_API_KEYS=
+SAMBANOVA_MODEL=
+SAMBANOVA_BASE_URL=https://api.sambanova.ai/v1
+
+
+# -------------------------------- Fireworks ---------------------------------
+
+FIREWORKS_ENABLED=true
+FIREWORKS_API_KEYS=
+FIREWORKS_MODEL=
+FIREWORKS_BASE_URL=https://api.fireworks.ai/inference/v1

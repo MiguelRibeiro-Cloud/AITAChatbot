@@ -10,6 +10,8 @@ from shared_code import (
     classify_genai_error,
     clean_reply,
     client,
+    generate_with_provider_router,
+    llm_provider_router_enabled,
     user_facing_error_message,
 )
 
@@ -148,6 +150,28 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         history = data.get("history", [])
         contents = build_contents(history, user_message)
+
+        if llm_provider_router_enabled():
+            provider_response = generate_with_provider_router(
+                history,
+                user_message,
+                max_tokens=500,
+            )
+            text_empty = not bool(provider_response.text.strip())
+            reply = clean_reply(provider_response.text.strip()) if not text_empty else COCONUT_FALLBACK
+            sse_body = (
+                f"data: {json.dumps({'debug': {'stage': 'provider_router', 'provider': provider_response.provider, 'model': provider_response.model, 'key_slot': provider_response.key_slot, 'chunks_seen': 1, 'chunks_empty': text_empty}})}\n\n"
+                f"data: {json.dumps({'token': reply})}\n\n"
+                f"data: {json.dumps({'done': True})}\n\n"
+            )
+            return func.HttpResponse(
+                sse_body,
+                mimetype="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         # Use the streaming API so each chunk is inspectable individually.
         response_stream = client.models.generate_content_stream(

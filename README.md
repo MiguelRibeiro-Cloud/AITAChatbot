@@ -26,7 +26,8 @@ An absurdly fun AI-powered chatbot that renders moral judgments on your life dil
 
 - Python 3.10+
 - Node.js 18+
-- A Google AI Studio API key (for Gemma 3 access)
+- A Google AI Studio API key (for the default Gemma/Gemini path)
+- Optional OpenAI-compatible provider API keys if enabling router failover
 
 ### Backend Setup
 
@@ -46,6 +47,7 @@ Create a `.env` file in `backend/`:
 
 ```env
 GEMINI_API_KEY=your_api_key_here
+LLM_PROVIDER_ROUTER_ENABLED=false
 ```
 
 Start the server:
@@ -65,6 +67,22 @@ npm start
 ```
 
 The React dev server runs on `http://localhost:3000` and proxies API calls to the backend.
+
+### Optional LLM Provider Router
+
+The existing Google AI Studio SDK implementation remains the default. To enable
+multi-provider failover, copy `.envexample`, fill provider API keys and model
+names, then set:
+
+```env
+LLM_PROVIDER_ROUTER_ENABLED=true
+```
+
+The router uses OpenAI-compatible `/chat/completions` endpoints and supports
+Google, Groq, Mistral, OpenRouter, Cloudflare Workers AI, Cohere, NVIDIA NIM,
+Hugging Face, SambaNova, and Fireworks. Streaming responses keep the same SSE
+shape for the frontend, but routed calls are emitted as a single completed
+message so failover can remain transparent.
 
 ## 📁 Project Structure
 
@@ -126,7 +144,7 @@ Notes:
 
 ## 🛠️ Tech Stack
 
-- **Backend:** Python, Flask, Flask-CORS, google-genai, python-dotenv
+- **Backend:** Python, Flask, Flask-CORS, google-genai, httpx, python-dotenv
 - **Frontend:** React 18, react-markdown, CSS3 (custom, no frameworks)
 - **AI Model:** Gemma 3 12B IT (via Google GenAI API)
 - **Streaming:** Server-Sent Events (SSE)
