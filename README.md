@@ -93,8 +93,22 @@ AmItheAssohole/
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/health` | GET | Health check — confirms the judge is in |
+| `/api/cases-heard` | GET | Read the deployment-wide cases-heard total |
 | `/api/chat` | POST | Send message, get full response |
 | `/api/chat/stream` | POST | Send message, get SSE streamed response |
+
+### Deployment Counter Settings
+
+The Azure Functions API reads the deployment-wide cases-heard counter from PostgreSQL using these app settings:
+
+```env
+POSTGRES_HOST=your-server.postgres.database.azure.com
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=aitabot
+POSTGRES_USER=aitabot_app
+POSTGRES_PASSWORD=replace-locally
+POSTGRES_SSLMODE=require
+```
 
 ### Request Body (POST endpoints)
 

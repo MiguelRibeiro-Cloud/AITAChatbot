@@ -1,6 +1,5 @@
 import json
 import logging
-import traceback
 import azure.functions as func
 from shared_code import (
     COCONUT_FALLBACK,
@@ -13,15 +12,15 @@ from shared_code import (
     client,
     extract_reply_text,
     response_diagnostics,
-    user_facing_error_message,
 )
+from db import CounterConfigError, CounterDatabaseError, increment_cases_heard
+
+CLIENT_ERROR_MESSAGE = "The request could not be completed."
 
 
-def _debug_payload(stage, exc=None, empty_kind=None, response_empty=None):
+def _debug_payload(stage, empty_kind=None, response_empty=None):
     return {
         "stage": stage,
-        "type": type(exc).__name__ if exc else None,
-        "message": str(exc) if exc else None,
         "model": MODEL_NAME,
         "response_text_empty": bool(response_empty) if response_empty is not None else None,
         "chunks_empty": None,
@@ -105,15 +104,20 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         reply = clean_reply(reply)
 
+        cases_heard = None
+        try:
+            cases_heard = increment_cases_heard()
+        except (CounterConfigError, CounterDatabaseError) as counter_exc:
+            logging.error("Cases-heard counter increment failed after successful chat: %s", counter_exc)
+
         return func.HttpResponse(
-            json.dumps({"reply": reply, "model": MODEL_NAME}),
+            json.dumps({"reply": reply, "model": MODEL_NAME, "casesHeard": cases_heard}),
             mimetype="application/json",
         )
 
     except Exception as e:
-        traceback.print_exc()
-        kind, raw = classify_genai_error(e)
-        logging.error(f"Chat error ({kind}): {raw}")
+        kind, _raw = classify_genai_error(e)
+        logging.exception("Chat error (%s)", kind)
 
         status_code = 500
         if kind == "usage_limit":
@@ -127,8 +131,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         return func.HttpResponse(
             json.dumps({
-                "error": user_facing_error_message(e),
-                "debug": _debug_payload(stage="genai_call", exc=e),
+                "error": CLIENT_ERROR_MESSAGE,
+                "debug": _debug_payload(stage="genai_call"),
             }),
             status_code=status_code,
             mimetype="application/json",

@@ -1,6 +1,5 @@
 import json
 import logging
-import traceback
 import azure.functions as func
 from shared_code import (
     COCONUT_FALLBACK,
@@ -11,8 +10,10 @@ from shared_code import (
     classify_genai_error,
     clean_reply,
     client,
-    user_facing_error_message,
 )
+from db import CounterConfigError, CounterDatabaseError, increment_cases_heard
+
+CLIENT_ERROR_MESSAGE = "The request could not be completed."
 
 
 def _extract_chunk_text(chunk):
@@ -86,7 +87,7 @@ def _sanitize_chunk(chunk, index):
             raw = vars(chunk)
 
         if not isinstance(raw, dict):
-            return {"chunk_index": index, "raw_repr": str(raw)[:300]}
+            return {"chunk_index": index, "raw_repr_available": raw is not None}
 
         safe_candidates = []
         for cand in raw.get("candidates", []):
@@ -118,7 +119,7 @@ def _sanitize_chunk(chunk, index):
             "candidates": safe_candidates,
         }
     except Exception as ex:
-        return {"chunk_index": index, "sanitize_error": str(ex)}
+        return {"chunk_index": index, "sanitize_error": True}
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
@@ -188,10 +189,16 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 f"data: {json.dumps({'done': True})}\n\n"
             )
         else:
+            cases_heard = None
+            try:
+                cases_heard = increment_cases_heard()
+            except (CounterConfigError, CounterDatabaseError) as counter_exc:
+                logging.error("Cases-heard counter increment failed after successful stream: %s", counter_exc)
+
             sse_body = (
                 f"data: {json.dumps({'debug': {'stage': 'genai_call', 'model': MODEL_NAME, 'chunks_seen': chunks_seen, 'chunks_empty': False, 'first_chunk_shapes': chunk_shapes}})}\n\n"
                 f"data: {json.dumps({'token': reply})}\n\n"
-                f"data: {json.dumps({'done': True})}\n\n"
+                f"data: {json.dumps({'done': True, 'casesHeard': cases_heard})}\n\n"
             )
 
         return func.HttpResponse(
@@ -204,9 +211,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         )
 
     except Exception as e:
-        traceback.print_exc()
-        kind, raw = classify_genai_error(e)
-        logging.error("Stream error (%s): %s", kind, raw)
+        kind, _raw = classify_genai_error(e)
+        logging.exception("Stream error (%s)", kind)
 
         status_code = 500
         if kind == "usage_limit":
@@ -220,7 +226,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         return func.HttpResponse(
             (
-                f"data: {json.dumps({'error': 'DEBUG_ERROR', 'stage': 'genai_call', 'type': type(e).__name__, 'message': str(e), 'model': MODEL_NAME, 'chunks_seen': None, 'chunks_empty': None, 'classified_kind': kind, 'user_error': user_facing_error_message(e)})}\n\n"
+                f"data: {json.dumps({'error': 'DEBUG_ERROR', 'stage': 'genai_call', 'message': CLIENT_ERROR_MESSAGE, 'model': MODEL_NAME, 'chunks_seen': None, 'chunks_empty': None, 'classified_kind': kind})}\n\n"
                 f"data: {json.dumps({'done': True})}\n\n"
             ),
             status_code=status_code,

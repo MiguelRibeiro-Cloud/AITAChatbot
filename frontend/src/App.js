@@ -108,12 +108,30 @@ function App() {
   const [placeholder, setPlaceholder] = useState('');
   const [showWelcome, setShowWelcome] = useState(true);
   const [connectionStatus, setConnectionStatus] = useState('checking');
-  const [messageCount, setMessageCount] = useState(0);
+  const [messageCount, setMessageCount] = useState(null);
   const [showDisclaimer, setShowDisclaimer] = useState(!localStorage.getItem('disclaimerAccepted'));
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
   const textareaRef = useRef(null);
   const abortControllerRef = useRef(null);
+
+  const updateCasesHeard = useCallback((casesHeard) => {
+    if (typeof casesHeard === 'number' && Number.isFinite(casesHeard)) {
+      setMessageCount(casesHeard);
+    }
+  }, []);
+
+  const fetchCasesHeard = useCallback(() => {
+    fetch(`${API_BASE}/api/cases-heard`)
+      .then(r => {
+        if (!r.ok) throw new Error(`Counter returned ${r.status}`);
+        return r.json();
+      })
+      .then(data => updateCasesHeard(data.casesHeard))
+      .catch(() => {
+        // The chatbot can still work if the deployment-wide counter is unavailable.
+      });
+  }, [updateCasesHeard]);
 
   // Rotate placeholder text
   useEffect(() => {
@@ -130,7 +148,10 @@ function App() {
     const checkHealth = () => {
       fetch(`${API_BASE}/api/health`)
         .then(r => r.json())
-        .then(() => setConnectionStatus('connected'))
+        .then(() => {
+          setConnectionStatus('connected');
+          fetchCasesHeard();
+        })
         .catch(() => {
           if (retries < 3) {
             retries++;
@@ -142,7 +163,7 @@ function App() {
         });
     };
     checkHealth();
-  }, []);
+  }, [fetchCasesHeard]);
 
   // Auto scroll
   useEffect(() => {
@@ -204,7 +225,6 @@ function App() {
 
     setInput('');
     setIsLoading(true);
-    setMessageCount(prev => prev + 1);
 
     // Reset textarea height
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
@@ -271,6 +291,7 @@ function App() {
                 });
               }
               if (data.done) {
+                updateCasesHeard(data.casesHeard);
                 // eslint-disable-next-line no-loop-func
                 setMessages(prev => {
                   const updated = [...prev];
@@ -340,7 +361,6 @@ function App() {
   const clearChat = () => {
     setMessages([]);
     setShowWelcome(true);
-    setMessageCount(0);
     inputRef.current?.focus();
   };
 
@@ -413,7 +433,7 @@ function App() {
               <span className="status-dot"></span>
               {connectionStatus === 'connected' ? 'Judge is IN' : connectionStatus === 'checking' ? 'Waking up...' : 'Judge is OUT'}
             </div>
-            {messageCount > 0 && (
+            {messageCount !== null && (
               <div className="msg-count-badge">
                 {messageCount} {messageCount === 1 ? 'case' : 'cases'} heard
               </div>
