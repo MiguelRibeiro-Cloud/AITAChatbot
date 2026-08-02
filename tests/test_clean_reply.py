@@ -79,9 +79,10 @@ class CleanReplyTests(unittest.TestCase):
             ),
         )
 
-    def test_prompt_requires_an_explanation_without_word_count_language(self):
-        self.assertIn("funny explanation paragraph", shared_code.SYSTEM_INSTRUCTION)
-        self.assertIn("two to four sentences", shared_code.SYSTEM_INSTRUCTION)
+    def test_prompt_requires_two_explanation_paragraphs_without_word_count_language(self):
+        self.assertIn("two funny explanation paragraphs", shared_code.SYSTEM_INSTRUCTION)
+        self.assertIn("exactly two playful paragraphs", shared_code.SYSTEM_INSTRUCTION)
+        self.assertIn("distinct jokes", shared_code._PRIMING_INSTRUCTION)
         self.assertNotIn("under 150 words", shared_code.SYSTEM_INSTRUCTION)
         self.assertNotIn("Word count", shared_code.SYSTEM_INSTRUCTION)
 
