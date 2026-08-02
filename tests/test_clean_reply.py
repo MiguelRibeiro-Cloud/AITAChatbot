@@ -41,6 +41,44 @@ class CleanReplyTests(unittest.TestCase):
             "The Court Declares: Guilty!\n\nThe vibes are cooked beyond legal recognition.",
         )
 
+    def test_removes_word_count_checking_and_final_plan_leak(self):
+        raw = (
+            "The Court Declares: Guilty!\n\n"
+            "Maintaining a perfect record of accuracy is a blatant attempt to undermine the "
+            "divine mystery of human error and the authority of this bench.\n\n"
+            "You are hereby sentenced to spend one week being told that you are actually "
+            "slightly wrong about everything.\n\n"
+            "(Word count: 75 words).\n\n"
+            "Checking \"Do not use... any markdown.\" I will avoid bolding the verdict.\n\n"
+            "Final Plan: The"
+        )
+
+        self.assertEqual(
+            shared_code.clean_reply(raw),
+            (
+                "The Court Declares: Guilty!\n\n"
+                "Maintaining a perfect record of accuracy is a blatant attempt to undermine the "
+                "divine mystery of human error and the authority of this bench.\n\n"
+                "You are hereby sentenced to spend one week being told that you are actually "
+                "slightly wrong about everything."
+            ),
+        )
+
+    def test_removes_final_plan_even_without_word_count(self):
+        raw = (
+            "The Court Declares: Not Guilty!\n\n"
+            "The court sees no crime here, only a mild seasoning of social chaos.\n\n"
+            "Plan: mention the verdict again and revise."
+        )
+
+        self.assertEqual(
+            shared_code.clean_reply(raw),
+            (
+                "The Court Declares: Not Guilty!\n\n"
+                "The court sees no crime here, only a mild seasoning of social chaos."
+            ),
+        )
+
     def test_default_output_budget_exceeds_prompt_word_budget(self):
         self.assertGreaterEqual(shared_code.MAX_OUTPUT_TOKENS, 1024)
 

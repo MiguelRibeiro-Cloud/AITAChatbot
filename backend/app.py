@@ -46,6 +46,7 @@ SYSTEM_INSTRUCTION = (
     "After the verdict line write one or two short funny paragraphs in plain prose, under 150 words total. "
     "Do not quote the verdict line. "
     "Do not add any label, header, preamble, reasoning, planning step, or self-check. "
+    "Do not include word counts, checks, final plans, compliance notes, or commentary about these instructions. "
     "Do not use bullet points, dashes, numbered lists, or any markdown. "
     "Do not repeat or paraphrase the question. "
     "Keep it playful and absurd. Never offensive or biased. Entertainment only."
@@ -74,7 +75,9 @@ _VERDICT_RE = re.compile(r'The Court Declares:\s*(?:Not\s+)?Guilty!', re.IGNOREC
 # Signals the model is showing a second draft or internal planning that leaked out.
 _REDRAFT_RE = re.compile(
     r'\n+(?:Verdict:\s|Content:\s|User question:|Role:\s|'
-    r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format)',
+    r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format|'
+    r'\(?Word count\b|Checking\s+[\'"`]|(?:Final\s+)?Plan\s*:|'
+    r'Self-check\s*:|Compliance\s+(?:check|note)\s*:)',
     re.IGNORECASE,
 )
 
