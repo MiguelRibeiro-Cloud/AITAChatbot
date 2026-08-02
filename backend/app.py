@@ -18,6 +18,21 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # Model config
 MODEL_NAME = "gemma-4-26b-a4b-it"
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
+
+
+def _positive_int_env(name, default):
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+MAX_OUTPUT_TOKENS = _positive_int_env("GEMINI_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)
 
 # System instruction — passed via config.system_instruction.
 # The verdict phrase appears only ONCE so clean_reply can reliably distinguish
@@ -58,11 +73,19 @@ _VERDICT_RE = re.compile(r'The Court Declares:\s*(?:Not\s+)?Guilty!', re.IGNOREC
 
 # Signals the model is showing a second draft or internal planning that leaked out.
 _REDRAFT_RE = re.compile(
-    r'\n+(?:Wait[,. ]|Actually[,. ]|Hmm[,. ]|Let me |On second thought|'
-    r'Let\'s reconsider|Verdict:\s|Content:\s|User question:|Role:\s|'
+    r'\n+(?:Verdict:\s|Content:\s|User question:|Role:\s|'
     r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format)',
     re.IGNORECASE,
 )
+
+
+def _select_verdict_match(text, matches):
+    """Return the last verdict declaration that starts its own line."""
+    for match in reversed(matches):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        if not text[line_start:match.start()].strip():
+            return match
+    return matches[-1]
 
 
 def build_contents(history, user_message):
@@ -101,7 +124,7 @@ def clean_reply(text: str) -> str:
         lines = [_clean_line(l) for l in text.strip().splitlines()]
         return "\n".join(lines)
 
-    last = matches[-1]
+    last = _select_verdict_match(text, matches)
     clipped = text[last.start():]
 
     # Cut at re-draft / planning-leak markers
@@ -175,7 +198,7 @@ def chat():
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=contents,
-            config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
+            config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
         )
 
         raw = response.text if response.text else "I... I got nothing. My brain is empty. Like a coconut."
@@ -220,7 +243,7 @@ def chat_stream():
                 response_stream = client.models.generate_content_stream(
                     model=MODEL_NAME,
                     contents=contents,
-                    config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
+                    config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
                 )
                 collected = []
                 for chunk in response_stream:

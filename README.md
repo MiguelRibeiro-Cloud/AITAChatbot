@@ -46,6 +46,8 @@ Create a `.env` file in `backend/`:
 
 ```env
 GEMINI_API_KEY=your_api_key_here
+# Optional: defaults to 1024, comfortably above the prompt's under-150-word reply target.
+GEMINI_MAX_OUTPUT_TOKENS=1024
 ```
 
 Start the server:

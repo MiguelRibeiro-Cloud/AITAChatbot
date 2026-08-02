@@ -3,6 +3,7 @@
   "Values": {
     "AzureWebJobsStorage": "",
     "FUNCTIONS_WORKER_RUNTIME": "python",
-    "GEMINI_API_KEY": "your_api_key_here"
+    "GEMINI_API_KEY": "your_api_key_here",
+    "GEMINI_MAX_OUTPUT_TOKENS": "1024"
   }
 }

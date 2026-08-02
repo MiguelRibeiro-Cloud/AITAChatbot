@@ -4,6 +4,7 @@ import traceback
 import azure.functions as func
 from shared_code import (
     COCONUT_FALLBACK,
+    MAX_OUTPUT_TOKENS,
     MODEL_NAME,
     SYSTEM_INSTRUCTION,
     build_contents,
@@ -75,7 +76,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=contents,
-            config={"max_output_tokens": 500, "system_instruction": SYSTEM_INSTRUCTION},
+            config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
         )
 
         reply, empty_kind = extract_reply_text(response)

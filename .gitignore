@@ -47,3 +47,5 @@ api/local.settings.json
 
 # Misc
 *.log
+*.notes
+

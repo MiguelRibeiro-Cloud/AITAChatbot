@@ -8,6 +8,21 @@ client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 # Model config
 DEFAULT_MODEL_NAME = "gemma-4-26b-a4b-it"
 MODEL_NAME = (os.environ.get("GEMINI_MODEL_NAME") or DEFAULT_MODEL_NAME).strip() or DEFAULT_MODEL_NAME
+DEFAULT_MAX_OUTPUT_TOKENS = 1024
+
+
+def _positive_int_env(name, default):
+    value = (os.environ.get(name) or "").strip()
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+MAX_OUTPUT_TOKENS = _positive_int_env("GEMINI_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)
 
 # System instruction — passed via config.system_instruction.
 # The verdict phrase appears only ONCE so clean_reply can reliably distinguish
@@ -48,11 +63,19 @@ _VERDICT_RE = re.compile(r'The Court Declares:\s*(?:Not\s+)?Guilty!', re.IGNOREC
 
 # Signals the model is showing a second draft or internal planning that leaked out.
 _REDRAFT_RE = re.compile(
-    r'\n+(?:Wait[,. ]|Actually[,. ]|Hmm[,. ]|Let me |On second thought|'
-    r'Let\'s reconsider|Verdict:\s|Content:\s|User question:|Role:\s|'
+    r'\n+(?:Verdict:\s|Content:\s|User question:|Role:\s|'
     r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format)',
     re.IGNORECASE,
 )
+
+
+def _select_verdict_match(text, matches):
+    """Return the last verdict declaration that starts its own line."""
+    for match in reversed(matches):
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        if not text[line_start:match.start()].strip():
+            return match
+    return matches[-1]
 
 
 def build_contents(history, user_message):
@@ -91,7 +114,7 @@ def clean_reply(text: str) -> str:
         lines = [_clean_line(l) for l in text.strip().splitlines()]
         return "\n".join(lines)
 
-    last = matches[-1]
+    last = _select_verdict_match(text, matches)
     clipped = text[last.start():]
 
     # Cut at re-draft / planning-leak markers
@@ -140,6 +163,12 @@ def response_diagnostics(response):
     """Collect safe response shape metadata for logging empty-output cases."""
     text = getattr(response, "text", None)
     candidates = getattr(response, "candidates", None)
+    finish_reasons = []
+    if candidates:
+        for candidate in candidates:
+            finish_reason = getattr(candidate, "finish_reason", None)
+            if finish_reason is not None:
+                finish_reasons.append(str(finish_reason))
 
     diag = {
         "has_text_attr": hasattr(response, "text"),
@@ -147,6 +176,7 @@ def response_diagnostics(response):
         "text_length": len(text) if isinstance(text, str) else None,
         "has_candidates_attr": hasattr(response, "candidates"),
         "candidate_count": len(candidates) if isinstance(candidates, list) else None,
+        "finish_reasons": finish_reasons,
     }
     return diag
 
