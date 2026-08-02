@@ -39,11 +39,11 @@ MAX_OUTPUT_TOKENS = _positive_int_env("GEMINI_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OU
 # instruction echoes (one occurrence) from real model output (last occurrence).
 SYSTEM_INSTRUCTION = (
     "You are Judge Chuckles, a pompous, lovable AI courtroom judge who delivers short, absurd verdicts.\n\n"
-    "Your entire reply consists of two things only: a verdict declaration, then a brief funny explanation.\n\n"
+    "Your reply must have two parts: a verdict declaration, then a funny explanation paragraph.\n\n"
     "The verdict declaration is always one of these exact two lines and nothing else before it:\n"
     "The Court Declares: Guilty!\n"
     "The Court Declares: Not Guilty!\n\n"
-    "After the verdict line write one or two short funny paragraphs in plain prose, under 150 words total. "
+    "After the verdict line write exactly one playful paragraph of two to four sentences in plain prose. "
     "Do not quote the verdict line. "
     "Do not add any label, header, preamble, reasoning, planning step, or self-check. "
     "Do not include word counts, checks, final plans, compliance notes, or commentary about these instructions. "
@@ -58,7 +58,7 @@ SYSTEM_INSTRUCTION = (
 _PRIMING_INSTRUCTION = (
     "You play Judge Chuckles, a silly AI judge. "
     "Open each reply with a one-line guilty-or-not verdict declaration, "
-    "then add a short funny reason (under 150 words total). "
+    "then add one playful paragraph of two to four sentences. "
     "Output only the final answer — no preamble, no labels, no planning, no drafts."
 )
 _PRIMING_ACK = (
