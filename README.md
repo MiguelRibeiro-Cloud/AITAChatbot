@@ -110,6 +110,16 @@ POSTGRES_PASSWORD=replace-locally
 POSTGRES_SSLMODE=require
 ```
 
+### Deployment Security Settings
+
+The deployed Azure Static Web Apps frontend uses `frontend/public/staticwebapp.config.json` for security headers and routing hardening. Production source maps are disabled by the frontend build script and `*.map` files under `/static/` are blocked by hosting config.
+
+The chat API endpoints are anonymous public endpoints, but enforce server-side validation, in-process request throttling, provider timeouts, maximum message length, maximum history length, and maximum provider output tokens. For high-traffic production use, replace the in-process throttle with a durable shared rate limiter or API gateway policy so limits apply consistently across all function instances.
+
+The public health endpoint only reports service liveness. Keep model names, API-key presence, and environment diagnostics in authenticated operational tooling or logs, not in public responses.
+
+Submitted stories are sent from the browser to the Azure Functions API and then to Google GenAI for response generation. The application stores only the deployment-wide case count in PostgreSQL and the browser stores only disclaimer acceptance. Do not submit names, addresses, workplaces, contact details, or other identifying information.
+
 ### Request Body (POST endpoints)
 
 ```json

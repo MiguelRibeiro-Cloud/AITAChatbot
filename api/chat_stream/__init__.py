@@ -5,11 +5,17 @@ from shared_code import (
     COCONUT_FALLBACK,
     MAX_OUTPUT_TOKENS,
     MODEL_NAME,
+    ProviderBusyError,
+    ProviderTimeoutError,
+    RequestValidationError,
     SYSTEM_INSTRUCTION,
     build_contents,
+    check_rate_limit,
     classify_genai_error,
     clean_reply,
     client,
+    run_with_timeout,
+    validate_chat_payload,
 )
 from db import CounterConfigError, CounterDatabaseError, increment_cases_heard
 
@@ -124,56 +130,51 @@ def _sanitize_chunk(chunk, index):
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """Iterate generate_content_stream chunks, extract text robustly, return SSE."""
-    try:
-        data = req.get_json()
-        if not data or "message" not in data:
-            return func.HttpResponse(
-                json.dumps({"error": "No message provided.", "debug": {"stage": "validation", "model": MODEL_NAME}}),
-                status_code=400,
-                mimetype="application/json",
-            )
-
-        user_message = data["message"].strip()
-        if not user_message:
-            return func.HttpResponse(
-                json.dumps({"error": "Empty message.", "debug": {"stage": "validation", "model": MODEL_NAME}}),
-                status_code=400,
-                mimetype="application/json",
-            )
-
-        if len(user_message) > 10000:
-            return func.HttpResponse(
-                json.dumps({"error": "Message too long. Keep it under 10,000 characters.", "debug": {"stage": "validation", "model": MODEL_NAME}}),
-                status_code=400,
-                mimetype="application/json",
-            )
-
-        history = data.get("history", [])
-        contents = build_contents(history, user_message)
-
-        # Use the streaming API so each chunk is inspectable individually.
-        response_stream = client.models.generate_content_stream(
-            model=MODEL_NAME,
-            contents=contents,
-            config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
+    allowed, retry_after = check_rate_limit(req)
+    if not allowed:
+        return func.HttpResponse(
+            json.dumps({"error": "Too many requests. Please try again shortly."}),
+            status_code=429,
+            mimetype="application/json",
+            headers={"Retry-After": str(retry_after)},
         )
 
-        collected_text = []
-        chunk_shapes = []   # first 2 chunks for debug surfacing
-        chunks_seen = 0
+    try:
+        try:
+            data = req.get_json()
+        except ValueError as exc:
+            raise RequestValidationError("Invalid JSON body.") from exc
+        user_message, history = validate_chat_payload(data)
+        contents = build_contents(history, user_message)
 
-        for chunk in response_stream:
-            chunks_seen += 1
+        def collect_stream():
+            # Use the streaming API so each chunk is inspectable individually.
+            response_stream = client.models.generate_content_stream(
+                model=MODEL_NAME,
+                contents=contents,
+                config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
+            )
 
-            # Record and log sanitized shape of first 2 chunks
-            if chunks_seen <= 2:
-                shape = _sanitize_chunk(chunk, chunks_seen)
-                chunk_shapes.append(shape)
-                logging.info("Stream chunk %d shape: %s", chunks_seen, json.dumps(shape))
+            collected_text = []
+            chunk_shapes = []   # first 2 chunks for debug surfacing
+            chunks_seen = 0
 
-            text = _extract_chunk_text(chunk)
-            if text:
-                collected_text.append(text)
+            for chunk in response_stream:
+                chunks_seen += 1
+
+                # Record and log sanitized shape of first 2 chunks
+                if chunks_seen <= 2:
+                    shape = _sanitize_chunk(chunk, chunks_seen)
+                    chunk_shapes.append(shape)
+                    logging.info("Stream chunk %d shape: %s", chunks_seen, json.dumps(shape))
+
+                text = _extract_chunk_text(chunk)
+                if text:
+                    collected_text.append(text)
+
+            return collected_text, chunk_shapes, chunks_seen
+
+        collected_text, chunk_shapes, chunks_seen = run_with_timeout(collect_stream)
 
         reply = clean_reply("".join(collected_text).strip())
 
@@ -210,12 +211,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             },
         )
 
+    except RequestValidationError as e:
+        return func.HttpResponse(
+            json.dumps({"error": str(e), "debug": {"stage": "validation", "model": MODEL_NAME}}),
+            status_code=400,
+            mimetype="application/json",
+        )
+
     except Exception as e:
         kind, _raw = classify_genai_error(e)
         logging.exception("Stream error (%s)", kind)
 
         status_code = 500
-        if kind == "usage_limit":
+        if isinstance(e, ProviderTimeoutError):
+            status_code = 504
+        elif isinstance(e, ProviderBusyError):
+            status_code = 503
+        elif kind == "usage_limit":
             status_code = 429
         elif kind == "provider_high_demand":
             status_code = 503

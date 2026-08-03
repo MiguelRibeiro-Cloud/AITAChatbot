@@ -33,8 +33,9 @@ class FakeHttpResponse:
 
 
 class FakeRequest:
-    def __init__(self, payload):
+    def __init__(self, payload, headers=None):
         self.payload = payload
+        self.headers = headers or {}
 
     def get_json(self):
         return self.payload
@@ -163,13 +164,22 @@ class ApiCounterIntegrationTests(unittest.TestCase):
         shared_code.COCONUT_FALLBACK = "fallback"
         shared_code.MAX_OUTPUT_TOKENS = 1024
         shared_code.MODEL_NAME = "test-model"
+        class ProviderBusyError(RuntimeError):
+            pass
+
+        shared_code.ProviderBusyError = ProviderBusyError
+        shared_code.ProviderTimeoutError = TimeoutError
+        shared_code.RequestValidationError = ValueError
         shared_code.SYSTEM_INSTRUCTION = "system"
         shared_code.build_contents = lambda history, user_message: [{"role": "user", "parts": [{"text": user_message}]}]
+        shared_code.check_rate_limit = lambda req: (True, None)
         shared_code.classify_genai_error = lambda exc: ("unknown", str(exc))
         shared_code.clean_reply = lambda text: text
         shared_code.client = types.SimpleNamespace(models=FakeModels())
         shared_code.extract_reply_text = lambda response: (response.text, None)
         shared_code.response_diagnostics = lambda response: {}
+        shared_code.run_with_timeout = lambda fn: fn()
+        shared_code.validate_chat_payload = lambda data: (data["message"].strip(), data.get("history", []))
         shared_code.user_facing_error_message = lambda exc: "safe public error"
         sys.modules["shared_code"] = shared_code
 
@@ -306,6 +316,15 @@ class ApiCounterIntegrationTests(unittest.TestCase):
         self.assertEqual(payload, {"error": "Cases-heard counter is temporarily unavailable."})
         self.assertEqual(calls["increment"], 0)
         self.assertNotIn("secret", response.get_body().decode())
+
+    def test_health_endpoint_returns_status_only(self):
+        health = load_module("health_function_under_test", API_ROOT / "health" / "__init__.py")
+
+        response = health.main(FakeRequest({}))
+        payload = json.loads(response.get_body())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(payload, {"status": "alive"})
 
 
 if __name__ == "__main__":

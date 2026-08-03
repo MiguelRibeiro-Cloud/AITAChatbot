@@ -667,8 +667,15 @@ body {
   padding: 32px;
   max-width: 600px;
   width: 100%;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   box-shadow: 0 20px 60px rgba(255, 23, 68, 0.3);
   animation: slideUp 0.4s ease;
+}
+
+.policy-modal {
+  border-color: rgba(131, 56, 236, 0.5);
+  box-shadow: 0 20px 60px rgba(131, 56, 236, 0.25);
 }
 
 @keyframes slideUp {
@@ -787,6 +794,25 @@ body {
 .disclaimer-warning {
   font-size: 1rem;
   animation: pulse 3s infinite;
+}
+
+.policy-link {
+  border: 1px solid rgba(255, 190, 11, 0.45);
+  background: rgba(255, 190, 11, 0.08);
+  color: var(--yellow);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.policy-link:hover,
+.policy-link:focus-visible {
+  background: rgba(255, 190, 11, 0.18);
+  border-color: var(--yellow);
+  outline: none;
 }
 
 /* ========== RESPONSIVE ========== */

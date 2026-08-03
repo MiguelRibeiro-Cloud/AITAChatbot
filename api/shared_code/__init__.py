@@ -1,5 +1,9 @@
 import os
 import re
+import threading
+import time
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from google import genai
 
 # Initialize the Gemini client with the API key
@@ -9,6 +13,18 @@ client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 DEFAULT_MODEL_NAME = "gemma-4-26b-a4b-it"
 MODEL_NAME = (os.environ.get("GEMINI_MODEL_NAME") or DEFAULT_MODEL_NAME).strip() or DEFAULT_MODEL_NAME
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 30
+DEFAULT_PROVIDER_MAX_CONCURRENCY = 4
+MAX_MESSAGE_CHARS = 10000
+MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_MESSAGE_CHARS = 10000
+MAX_HISTORY_TOTAL_CHARS = 20000
+RATE_LIMIT_WINDOW_SECONDS = 60
+RATE_LIMIT_MAX_REQUESTS = 20
+
+_rate_limit_lock = threading.Lock()
+_rate_limit_hits = defaultdict(deque)
+_timeout_executor = ThreadPoolExecutor(max_workers=8)
 
 
 def _positive_int_env(name, default):
@@ -23,6 +39,12 @@ def _positive_int_env(name, default):
 
 
 MAX_OUTPUT_TOKENS = _positive_int_env("GEMINI_MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS)
+REQUEST_TIMEOUT_SECONDS = _positive_int_env("GEMINI_REQUEST_TIMEOUT_SECONDS", DEFAULT_REQUEST_TIMEOUT_SECONDS)
+PROVIDER_MAX_CONCURRENCY = _positive_int_env(
+    "GEMINI_MAX_CONCURRENT_REQUESTS",
+    DEFAULT_PROVIDER_MAX_CONCURRENCY,
+)
+_provider_semaphore = threading.BoundedSemaphore(PROVIDER_MAX_CONCURRENCY)
 
 # System instruction — passed via config.system_instruction.
 # The verdict phrase appears only ONCE so clean_reply can reliably distinguish
@@ -58,6 +80,136 @@ _PRIMING_ACK = (
 )
 
 COCONUT_FALLBACK = "I... I got nothing. My brain is empty. Like a coconut."
+
+
+class RequestValidationError(ValueError):
+    """Raised for client-correctable chat request validation failures."""
+
+
+class ProviderTimeoutError(TimeoutError):
+    """Raised when the model provider call exceeds the configured timeout."""
+
+
+class ProviderBusyError(RuntimeError):
+    """Raised when local provider concurrency is already saturated."""
+
+
+def _headers_get(headers, name):
+    if not headers:
+        return None
+    try:
+        return headers.get(name) or headers.get(name.lower())
+    except AttributeError:
+        return None
+
+
+def client_rate_limit_key(req):
+    """Return a best-effort client key from proxy headers."""
+    headers = getattr(req, "headers", {}) or {}
+    forwarded = _headers_get(headers, "x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",", 1)[0].strip() or "unknown"
+
+    for header in ("x-client-ip", "x-real-ip"):
+        value = _headers_get(headers, header)
+        if value:
+            return value.strip()
+
+    return "unknown"
+
+
+def check_rate_limit(req):
+    """In-process request throttle for anonymous chat endpoints."""
+    now = time.time()
+    key = client_rate_limit_key(req)
+
+    with _rate_limit_lock:
+        hits = _rate_limit_hits[key]
+        while hits and now - hits[0] >= RATE_LIMIT_WINDOW_SECONDS:
+            hits.popleft()
+        if len(hits) >= RATE_LIMIT_MAX_REQUESTS:
+            retry_after = max(1, int(RATE_LIMIT_WINDOW_SECONDS - (now - hits[0])))
+            return False, retry_after
+        hits.append(now)
+        return True, None
+
+
+def reset_rate_limits():
+    """Test helper for clearing in-memory throttle state."""
+    with _rate_limit_lock:
+        _rate_limit_hits.clear()
+
+
+def validate_chat_payload(data):
+    """Validate and normalize a chat request payload."""
+    if not isinstance(data, dict):
+        raise RequestValidationError("Invalid JSON body.")
+
+    raw_message = data.get("message")
+    if not isinstance(raw_message, str):
+        raise RequestValidationError("Message must be text.")
+
+    user_message = raw_message.strip()
+    if not user_message:
+        raise RequestValidationError("Message is required.")
+    if len(user_message) > MAX_MESSAGE_CHARS:
+        raise RequestValidationError(f"Message too long. Keep it under {MAX_MESSAGE_CHARS:,} characters.")
+
+    raw_history = data.get("history", [])
+    if raw_history is None:
+        raw_history = []
+    if not isinstance(raw_history, list):
+        raise RequestValidationError("History must be a list.")
+    if len(raw_history) > MAX_HISTORY_MESSAGES:
+        raise RequestValidationError(f"History too long. Keep it to {MAX_HISTORY_MESSAGES} messages.")
+
+    history = []
+    total_history_chars = 0
+    for item in raw_history:
+        if not isinstance(item, dict):
+            raise RequestValidationError("History entries must be objects.")
+
+        role = item.get("role")
+        if role not in ("user", "assistant", "model"):
+            raise RequestValidationError("History entry role is invalid.")
+
+        content = item.get("content")
+        if not isinstance(content, str):
+            raise RequestValidationError("History entry content must be text.")
+
+        content = content.strip()
+        if not content:
+            continue
+        if len(content) > MAX_HISTORY_MESSAGE_CHARS:
+            raise RequestValidationError(
+                f"History messages must be under {MAX_HISTORY_MESSAGE_CHARS:,} characters."
+            )
+
+        total_history_chars += len(content)
+        if total_history_chars > MAX_HISTORY_TOTAL_CHARS:
+            raise RequestValidationError(
+                f"Total history too long. Keep it under {MAX_HISTORY_TOTAL_CHARS:,} characters."
+            )
+
+        history.append({"role": "assistant" if role in ("assistant", "model") else "user", "content": content})
+
+    return user_message, history
+
+
+def run_with_timeout(fn):
+    """Run a blocking provider operation with a bounded wait."""
+    if not _provider_semaphore.acquire(blocking=False):
+        raise ProviderBusyError("Provider concurrency limit reached.")
+
+    try:
+        future = _timeout_executor.submit(fn)
+        try:
+            return future.result(timeout=REQUEST_TIMEOUT_SECONDS)
+        except TimeoutError as exc:
+            future.cancel()
+            raise ProviderTimeoutError("Provider request timed out.") from exc
+    finally:
+        _provider_semaphore.release()
 
 # Matches a complete verdict declaration in either guilty or not-guilty form.
 # More specific than 'The Court Declares:' alone, which can appear twice inside

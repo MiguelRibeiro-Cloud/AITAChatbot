@@ -5,13 +5,19 @@ from shared_code import (
     COCONUT_FALLBACK,
     MAX_OUTPUT_TOKENS,
     MODEL_NAME,
+    ProviderBusyError,
+    ProviderTimeoutError,
+    RequestValidationError,
     SYSTEM_INSTRUCTION,
     build_contents,
+    check_rate_limit,
     classify_genai_error,
     clean_reply,
     client,
     extract_reply_text,
     response_diagnostics,
+    run_with_timeout,
+    validate_chat_payload,
 )
 from db import CounterConfigError, CounterDatabaseError, increment_cases_heard
 
@@ -30,52 +36,29 @@ def _debug_payload(stage, empty_kind=None, response_empty=None):
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
     """Send a message and get a response from Gemma 3 12B."""
+    allowed, retry_after = check_rate_limit(req)
+    if not allowed:
+        return func.HttpResponse(
+            json.dumps({"error": "Too many requests. Please try again shortly."}),
+            status_code=429,
+            mimetype="application/json",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     try:
-        data = req.get_json()
-        if not data or "message" not in data:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "No message provided. Say something, coward!",
-                        "debug": _debug_payload(stage="validation"),
-                    }
-                ),
-                status_code=400,
-                mimetype="application/json",
-            )
-
-        user_message = data["message"].strip()
-        if not user_message:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "Empty message? Really? Try harder.",
-                        "debug": _debug_payload(stage="validation"),
-                    }
-                ),
-                status_code=400,
-                mimetype="application/json",
-            )
-
-        if len(user_message) > 10000:
-            return func.HttpResponse(
-                json.dumps(
-                    {
-                        "error": "That's a novel, not a message. Keep it under 10,000 characters.",
-                        "debug": _debug_payload(stage="validation"),
-                    }
-                ),
-                status_code=400,
-                mimetype="application/json",
-            )
-
-        history = data.get("history", [])
+        try:
+            data = req.get_json()
+        except ValueError as exc:
+            raise RequestValidationError("Invalid JSON body.") from exc
+        user_message, history = validate_chat_payload(data)
         contents = build_contents(history, user_message)
 
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=contents,
-            config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
+        response = run_with_timeout(
+            lambda: client.models.generate_content(
+                model=MODEL_NAME,
+                contents=contents,
+                config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
+            )
         )
 
         reply, empty_kind = extract_reply_text(response)
@@ -115,12 +98,23 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json",
         )
 
+    except RequestValidationError as e:
+        return func.HttpResponse(
+            json.dumps({"error": str(e), "debug": _debug_payload(stage="validation")}),
+            status_code=400,
+            mimetype="application/json",
+        )
+
     except Exception as e:
         kind, _raw = classify_genai_error(e)
         logging.exception("Chat error (%s)", kind)
 
         status_code = 500
-        if kind == "usage_limit":
+        if isinstance(e, ProviderTimeoutError):
+            status_code = 504
+        elif isinstance(e, ProviderBusyError):
+            status_code = 503
+        elif kind == "usage_limit":
             status_code = 429
         elif kind == "provider_high_demand":
             status_code = 503

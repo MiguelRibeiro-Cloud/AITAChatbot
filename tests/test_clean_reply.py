@@ -89,6 +89,59 @@ class CleanReplyTests(unittest.TestCase):
     def test_default_output_budget_exceeds_prompt_word_budget(self):
         self.assertGreaterEqual(shared_code.MAX_OUTPUT_TOKENS, 1024)
 
+    def test_chat_payload_validation_normalizes_history(self):
+        message, history = shared_code.validate_chat_payload(
+            {
+                "message": "  AITA?  ",
+                "history": [
+                    {"role": "model", "content": "  Previous verdict.  "},
+                    {"role": "user", "content": "  More context.  "},
+                ],
+            }
+        )
+
+        self.assertEqual(message, "AITA?")
+        self.assertEqual(
+            history,
+            [
+                {"role": "assistant", "content": "Previous verdict."},
+                {"role": "user", "content": "More context."},
+            ],
+        )
+
+    def test_chat_payload_validation_rejects_oversized_history(self):
+        history = [{"role": "user", "content": "x"} for _ in range(shared_code.MAX_HISTORY_MESSAGES + 1)]
+
+        with self.assertRaises(shared_code.RequestValidationError):
+            shared_code.validate_chat_payload({"message": "AITA?", "history": history})
+
+    def test_rate_limit_blocks_after_configured_window_count(self):
+        shared_code.reset_rate_limits()
+        req = types.SimpleNamespace(headers={"x-forwarded-for": "203.0.113.10"})
+
+        for _ in range(shared_code.RATE_LIMIT_MAX_REQUESTS):
+            allowed, _retry_after = shared_code.check_rate_limit(req)
+            self.assertTrue(allowed)
+
+        allowed, retry_after = shared_code.check_rate_limit(req)
+
+        self.assertFalse(allowed)
+        self.assertGreaterEqual(retry_after, 1)
+        shared_code.reset_rate_limits()
+
+    def test_provider_concurrency_guard_rejects_when_saturated(self):
+        acquired = []
+        for _ in range(shared_code.PROVIDER_MAX_CONCURRENCY):
+            self.assertTrue(shared_code._provider_semaphore.acquire(blocking=False))
+            acquired.append(True)
+
+        try:
+            with self.assertRaises(shared_code.ProviderBusyError):
+                shared_code.run_with_timeout(lambda: "ok")
+        finally:
+            for _ in acquired:
+                shared_code._provider_semaphore.release()
+
 
 if __name__ == "__main__":
     unittest.main()
