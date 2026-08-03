@@ -79,7 +79,10 @@ _REDRAFT_RE = re.compile(
     r'\n+(?:Verdict:\s|Content:\s|User question:|Role:\s|'
     r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format|'
     r'\(?Word count\b|Checking\s+[\'"`]|(?:Final\s+)?Plan\s*:|'
-    r'Self-check\s*:|Compliance\s+(?:check|note)\s*:)',
+    r'Self-check\s*:|Self-correction\s*:|'
+    r'Wait,?\s+(?:the\s+)?instructions?\s+(?:say|said)\b|'
+    r'The\s+instructions?\s+(?:say|said)\b|'
+    r'Compliance\s+(?:check|note)\s*:)',
     re.IGNORECASE,
 )
 
@@ -91,6 +94,16 @@ def _select_verdict_match(text, matches):
         if not text[line_start:match.start()].strip():
             return match
     return matches[-1]
+
+
+def _select_reply_start(text, matches):
+    leak = _REDRAFT_RE.search(text)
+    eligible = matches
+    if leak:
+        before_leak = [match for match in matches if match.start() < leak.start()]
+        if before_leak:
+            eligible = before_leak
+    return _select_verdict_match(text, eligible)
 
 
 def build_contents(history, user_message):
@@ -114,10 +127,10 @@ def build_contents(history, user_message):
 def clean_reply(text: str) -> str:
     """Trim everything outside the actual verdict.
 
-    Uses the LAST complete verdict match as the start of the real answer.
-    If the model echoes the system instruction (one verdict phrase) before giving
-    the real verdict, the last match is the real one. Then cuts at re-draft /
-    planning-leak markers and a second verdict declaration (model looping).
+    Uses the last complete verdict match before any planning-leak marker as the
+    real answer start. If no marker appears first, this still handles instruction
+    echoes by taking the last verdict match. Then cuts at re-draft / planning-leak
+    markers and a second verdict declaration (model looping).
     """
     matches = list(_VERDICT_RE.finditer(text))
     if not matches:
@@ -129,7 +142,7 @@ def clean_reply(text: str) -> str:
         lines = [_clean_line(l) for l in text.strip().splitlines()]
         return "\n".join(lines)
 
-    last = _select_verdict_match(text, matches)
+    last = _select_reply_start(text, matches)
     clipped = text[last.start():]
 
     # Cut at re-draft / planning-leak markers

@@ -64,6 +64,28 @@ class CleanReplyTests(unittest.TestCase):
             ),
         )
 
+    def test_removes_wait_instruction_and_self_correction_leak(self):
+        raw = (
+            "The Court Declares: Guilty!\n\n"
+            "You are found guilty of practicing reckless digital sorcery by waving a magic "
+            "wand you clearly do not understand.\n\n"
+            "I sentence you to teach a group of confused spreadsheets how to use squirrels.\n\n"
+            "Wait, the instructions say \"Do not use... any markdown.\" Bolding is markdown. "
+            "I'll use plain text.\n\n"
+            "Self-correction: The instructions say \"The verdict declaration is always one "
+            "of these exact two lines and nothing else before it: The Court Declares: Not Guilty!\""
+        )
+
+        self.assertEqual(
+            shared_code.clean_reply(raw),
+            (
+                "The Court Declares: Guilty!\n\n"
+                "You are found guilty of practicing reckless digital sorcery by waving a magic "
+                "wand you clearly do not understand.\n\n"
+                "I sentence you to teach a group of confused spreadsheets how to use squirrels."
+            ),
+        )
+
     def test_removes_final_plan_even_without_word_count(self):
         raw = (
             "The Court Declares: Not Guilty!\n\n"
