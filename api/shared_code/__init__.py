@@ -221,12 +221,18 @@ _REDRAFT_RE = re.compile(
     r'\n+(?:Verdict:\s|Content:\s|User question:|Role:\s|'
     r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format|'
     r'\(?Word count\b|Checking\s+[\'"`]|(?:Final\s+)?Plan\s*:|'
-    r'Self-check\s*:|Self-correction\s*:|'
+    r'Self-check\s*:|Self[- ]correction(?:\s+on\s+[^\n:]{1,120})?\s*:|'
+    r'(?:Following|According\s+to)\s+the\s+system\s+(?:instructions?|prompt)\b|'
+    r'I\s+(?:must|need\s+to|should|will)\s+(?:follow|obey|comply\s+with)\s+'
+    r'(?:the\s+)?system\s+(?:instructions?|prompt)\b|'
+    r'The\s+system\s+(?:instructions?|prompt)\s+(?:say|says|said|require|requires|required)\b|'
     r'Wait,?\s+(?:the\s+)?instructions?\s+(?:say|said)\b|'
     r'The\s+instructions?\s+(?:say|said)\b|'
     r'Compliance\s+(?:check|note)\s*:)',
     re.IGNORECASE,
 )
+
+_PROCESS_FILLER_LINE_RE = re.compile(r"let['’]s\s+go[.!]?", re.IGNORECASE)
 
 
 def _select_verdict_match(text, matches):
@@ -282,7 +288,8 @@ def clean_reply(text: str) -> str:
             l = re.sub(r'^\d+[.)\s]\s*', '', l)
             return l
         lines = [_clean_line(l) for l in text.strip().splitlines()]
-        return "\n".join(lines)
+        lines = [line for line in lines if not _PROCESS_FILLER_LINE_RE.fullmatch(line.strip())]
+        return "\n".join(lines).rstrip()
 
     last = _select_reply_start(text, matches)
     clipped = text[last.start():]
@@ -307,7 +314,8 @@ def clean_reply(text: str) -> str:
         l = re.sub(r'^\d+[.)\s]\s*', '', l)  # remove 1. / 1) numbered markers
         return l
     lines = [_clean_line(l) for l in clipped.strip().splitlines()]
-    return "\n".join(lines)
+    lines = [line for line in lines if not _PROCESS_FILLER_LINE_RE.fullmatch(line.strip())]
+    return "\n".join(lines).rstrip()
 
 
 def extract_reply_text(response):
