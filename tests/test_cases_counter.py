@@ -143,45 +143,45 @@ class ApiCounterIntegrationTests(unittest.TestCase):
     def setUp(self):
         install_fake_azure_functions()
 
-    def install_fake_shared_code(self, *, model_raises=False):
+    def install_fake_shared_code(self, *, model_raises=False, schema_fails=False, verdict="guilty"):
         provider_error = "provider failed with password=super-secret at /tmp/private/path"
 
-        class FakeResponse:
-            text = "The Court Declares: Guilty!\n\nCase complete."
-
-        class FakeModels:
-            def generate_content(self, **_kwargs):
-                if model_raises:
-                    raise RuntimeError(provider_error)
-                return FakeResponse()
-
-            def generate_content_stream(self, **_kwargs):
-                if model_raises:
-                    raise RuntimeError(provider_error)
-                return [types.SimpleNamespace(text="The Court Declares: Guilty!\n\nCase complete.")]
-
         shared_code = types.ModuleType("shared_code")
-        shared_code.COCONUT_FALLBACK = "fallback"
-        shared_code.MAX_OUTPUT_TOKENS = 1024
-        shared_code.MODEL_NAME = "test-model"
         class ProviderBusyError(RuntimeError):
             pass
 
+        class StructuredResponseError(ValueError):
+            pass
+
+        class RequestValidationError(ValueError):
+            pass
+
+        def generate_judgment(_contents):
+            if model_raises:
+                raise RuntimeError(provider_error)
+            if schema_fails:
+                raise StructuredResponseError("Structured response was invalid JSON.")
+            verdict_line = (
+                "The Court Declares: Guilty!" if verdict == "guilty"
+                else "The Court Declares: Not Guilty!"
+            )
+            return {
+                "verdict": verdict,
+                "reply": f"{verdict_line}\n\nCase complete.\n\nThe bailiff polishes a spoon.",
+            }
+
         shared_code.ProviderBusyError = ProviderBusyError
         shared_code.ProviderTimeoutError = TimeoutError
-        shared_code.RequestValidationError = ValueError
-        shared_code.SYSTEM_INSTRUCTION = "system"
+        shared_code.RequestValidationError = RequestValidationError
+        shared_code.StructuredResponseError = StructuredResponseError
         shared_code.build_contents = lambda history, user_message: [{"role": "user", "parts": [{"text": user_message}]}]
         shared_code.check_rate_limit = lambda req: (True, None)
         shared_code.classify_genai_error = lambda exc: ("unknown", str(exc))
-        shared_code.clean_reply = lambda text: text
-        shared_code.client = types.SimpleNamespace(models=FakeModels())
-        shared_code.extract_reply_text = lambda response: (response.text, None)
-        shared_code.response_diagnostics = lambda response: {}
+        shared_code.generate_judgment = mock.Mock(side_effect=generate_judgment)
         shared_code.run_with_timeout = lambda fn: fn()
         shared_code.validate_chat_payload = lambda data: (data["message"].strip(), data.get("history", []))
-        shared_code.user_facing_error_message = lambda exc: "safe public error"
         sys.modules["shared_code"] = shared_code
+        return shared_code
 
     def install_fake_db(self, *, increment_value=125, increment_raises=False):
         calls = {"get": 0, "increment": 0}
@@ -229,7 +229,12 @@ class ApiCounterIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["casesHeard"], 9007199254740993)
         self.assertIsInstance(payload["casesHeard"], int)
-        self.assertEqual(set(payload), {"reply", "casesHeard"})
+        self.assertEqual(set(payload), {"reply", "verdict", "casesHeard"})
+        self.assertEqual(payload["verdict"], "guilty")
+        self.assertEqual(
+            payload["reply"],
+            "The Court Declares: Guilty!\n\nCase complete.\n\nThe bailiff polishes a spoon.",
+        )
         self.assertEqual(calls["increment"], 1)
 
     def test_stream_success_increments_exactly_once(self):
@@ -243,9 +248,45 @@ class ApiCounterIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(calls["increment"], 1)
         self.assertIn('"casesHeard": 126', body)
+        self.assertIn('"verdict": "guilty"', body)
         self.assertNotIn('"debug"', body)
         self.assertNotIn('"model"', body)
         self.assertNotIn("first_chunk_shapes", body)
+
+    def test_both_chat_paths_use_shared_structured_judgment(self):
+        shared_code = self.install_fake_shared_code(verdict="not_guilty")
+        calls = self.install_fake_db()
+        chat = load_module("structured_chat_function_under_test", API_ROOT / "chat" / "__init__.py")
+        stream = load_module("structured_stream_function_under_test", API_ROOT / "chat_stream" / "__init__.py")
+
+        chat_response = chat.main(FakeRequest({"message": "AITA?"}))
+        stream_response = stream.main(FakeRequest({"message": "AITA?"}))
+        chat_payload = json.loads(chat_response.get_body())
+        events = [json.loads(line[6:]) for line in stream_response.get_body().decode().splitlines() if line.startswith("data: ")]
+
+        self.assertEqual(shared_code.generate_judgment.call_count, 2)
+        self.assertEqual(chat_payload["verdict"], "not_guilty")
+        self.assertEqual(chat_payload["reply"], "The Court Declares: Not Guilty!\n\nCase complete.\n\nThe bailiff polishes a spoon.")
+        self.assertEqual(events[0], {"token": chat_payload["reply"]})
+        self.assertEqual(events[1]["verdict"], chat_payload["verdict"])
+        self.assertEqual(calls["increment"], 2)
+
+    def test_schema_failure_is_safe_on_both_chat_paths(self):
+        self.install_fake_shared_code(schema_fails=True)
+        calls = self.install_fake_db()
+        chat = load_module("schema_error_chat_function_under_test", API_ROOT / "chat" / "__init__.py")
+        stream = load_module("schema_error_stream_function_under_test", API_ROOT / "chat_stream" / "__init__.py")
+
+        with mock.patch.object(chat.logging, "exception"), mock.patch.object(stream.logging, "exception"):
+            chat_response = chat.main(FakeRequest({"message": "AITA?"}))
+            stream_response = stream.main(FakeRequest({"message": "AITA?"}))
+
+        self.assertEqual(chat_response.status_code, 502)
+        self.assertEqual(json.loads(chat_response.get_body()), {"error": "The request could not be completed."})
+        self.assertEqual(stream_response.status_code, 502)
+        self.assertNotIn("verdict", stream_response.get_body().decode())
+        self.assertNotIn("invalid JSON", stream_response.get_body().decode())
+        self.assertEqual(calls["increment"], 0)
 
     def test_failed_model_request_does_not_increment(self):
         self.install_fake_shared_code(model_raises=True)

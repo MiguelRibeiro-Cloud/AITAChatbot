@@ -340,7 +340,7 @@ function App() {
                   updated[updated.length - 1] = {
                     ...updated[updated.length - 1],
                     content: botContent,
-                    judgment: getVerdictBadge(botContent),
+                    judgment: getVerdictBadge(data.verdict),
                   };
                   return updated;
                 });
