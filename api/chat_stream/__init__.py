@@ -185,7 +185,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 chunks_seen, MODEL_NAME, json.dumps(chunk_shapes),
             )
             sse_body = (
-                f"data: {json.dumps({'debug': {'stage': 'stream_parse', 'model': MODEL_NAME, 'chunks_seen': chunks_seen, 'chunks_empty': True, 'first_chunk_shapes': chunk_shapes}})}\n\n"
                 f"data: {json.dumps({'token': COCONUT_FALLBACK})}\n\n"
                 f"data: {json.dumps({'done': True})}\n\n"
             )
@@ -197,7 +196,6 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
                 logging.error("Cases-heard counter increment failed after successful stream: %s", counter_exc)
 
             sse_body = (
-                f"data: {json.dumps({'debug': {'stage': 'genai_call', 'model': MODEL_NAME, 'chunks_seen': chunks_seen, 'chunks_empty': False, 'first_chunk_shapes': chunk_shapes}})}\n\n"
                 f"data: {json.dumps({'token': reply})}\n\n"
                 f"data: {json.dumps({'done': True, 'casesHeard': cases_heard})}\n\n"
             )
@@ -213,7 +211,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
     except RequestValidationError as e:
         return func.HttpResponse(
-            json.dumps({"error": str(e), "debug": {"stage": "validation", "model": MODEL_NAME}}),
+            json.dumps({"error": str(e)}),
             status_code=400,
             mimetype="application/json",
         )
@@ -238,7 +236,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
 
         return func.HttpResponse(
             (
-                f"data: {json.dumps({'error': 'DEBUG_ERROR', 'stage': 'genai_call', 'message': CLIENT_ERROR_MESSAGE, 'model': MODEL_NAME, 'chunks_seen': None, 'chunks_empty': None, 'classified_kind': kind})}\n\n"
+                f"data: {json.dumps({'error': CLIENT_ERROR_MESSAGE})}\n\n"
                 f"data: {json.dumps({'done': True})}\n\n"
             ),
             status_code=status_code,

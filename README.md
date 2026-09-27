@@ -1,15 +1,15 @@
 # 🔥 Am I The A**hole? — AI Judge Chatbot 🔥
 
-An absurdly fun AI-powered chatbot that renders moral judgments on your life dilemmas. Powered by **Gemma 3 12B** via the Google GenAI API, with a **Flask** backend and **React** frontend.
+An absurdly fun AI-powered chatbot that renders moral judgments on your life dilemmas. Powered by a configurable **Gemma** model via the Google GenAI API, with a **Python Azure Functions** backend and **React** frontend.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python)
 ![React](https://img.shields.io/badge/React-18-61dafb?logo=react)
-![Flask](https://img.shields.io/badge/Flask-3.1-black?logo=flask)
-![Gemma](https://img.shields.io/badge/Gemma_3-12B-orange?logo=google)
+![Azure Functions](https://img.shields.io/badge/Azure_Functions-Python-0062ad?logo=azurefunctions)
+![Gemma](https://img.shields.io/badge/Gemma-configurable-orange?logo=google)
 
 ## ✨ Features
 
-- 🤖 **AI-Powered Judgments** — Real-time streaming responses from Gemma 3 12B
+- 🤖 **AI-Powered Judgments** — Real-time streaming responses from a configurable Gemma model
 - ⚡ **Live Streaming** — Watch the verdict unfold in real-time via SSE
 - 🎨 **Ridiculous Design** — Glassmorphism, animated blobs, gradient everything
 - 📋 **Copy Responses** — One-click copy on any AI response
@@ -26,37 +26,34 @@ An absurdly fun AI-powered chatbot that renders moral judgments on your life dil
 
 - Python 3.10+
 - Node.js 18+
-- A Google AI Studio API key (for Gemma 3 access)
+- A Google AI Studio API key (for Gemma access)
+- Azure Functions Core Tools
 
-### Backend Setup
+### Azure Functions API Setup
 
 ```bash
-cd backend
-python -m venv venv
+cd api
+python -m venv .venv
 
 # Windows
-.\venv\Scripts\activate
+.\.venv\Scripts\activate
 # macOS/Linux
-source venv/bin/activate
+source .venv/bin/activate
 
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in `backend/`:
-
-```env
-GEMINI_API_KEY=your_api_key_here
-# Optional: defaults to 1024, comfortably above the prompt's under-150-word reply target.
-GEMINI_MAX_OUTPUT_TOKENS=1024
-```
+Copy `local.settings.json.example` to the ignored `local.settings.json` file and fill in the Google GenAI and PostgreSQL settings for your environment.
 
 Start the server:
 
 ```bash
-python app.py
+func start
 ```
 
-The Flask server runs on `http://localhost:5000`.
+The Azure Functions API runs on `http://localhost:7071` by default.
+
+The Flask application under `backend/` is retained as a legacy, non-production implementation. The deployed application uses the Azure Functions under `api/`.
 
 ### Frontend Setup
 
@@ -66,16 +63,17 @@ npm install
 npm start
 ```
 
-The React dev server runs on `http://localhost:3000` and proxies API calls to the backend.
+For local development, set `REACT_APP_API_URL=http://localhost:7071` in `frontend/.env.local`. The React dev server runs on `http://localhost:3000`; production uses same-origin `/api` routes.
 
 ## 📁 Project Structure
 
 ```
-AmItheAssohole/
-├── backend/
-│   ├── app.py              # Flask API server
-│   ├── requirements.txt    # Python dependencies
-│   └── .env                # API key (not committed)
+AITAChatbot/
+├── api/                        # Production Azure Functions API
+│   ├── shared_code/        # GenAI, validation, and request controls
+│   ├── db.py               # PostgreSQL counter access
+│   └── requirements.txt    # Production Python dependencies
+├── backend/                    # Legacy non-production Flask implementation
 ├── frontend/
 │   ├── public/
 │   │   └── index.html      # HTML template with Google Fonts
@@ -84,6 +82,8 @@ AmItheAssohole/
 │   │   ├── App.css         # All styling (glassmorphism, animations)
 │   │   └── index.js        # React entry point
 │   └── package.json        # Node dependencies
+├── tests/                      # Python unit tests
+├── .github/workflows/          # Azure Static Web Apps deployment
 ├── .gitignore
 └── README.md
 ```
@@ -152,22 +152,21 @@ Notes:
 
 ## 🛠️ Tech Stack
 
-- **Backend:** Python, Flask, Flask-CORS, google-genai, python-dotenv
+- **Backend:** Python, Azure Functions, google-genai
 - **Frontend:** React 18, react-markdown, CSS3 (custom, no frameworks)
-- **AI Model:** Gemma 3 12B IT (via Google GenAI API)
+- **Data:** PostgreSQL via psycopg
+- **AI Model:** Configurable Gemma model via the Google GenAI API
+- **Deployment:** Azure Static Web Apps with integrated Azure Functions
 - **Streaming:** Server-Sent Events (SSE)
 
 ## 🎭 Judgment Types
 
-The AI delivers verdicts tagged with classic AITA judgments:
+The UI maps the model's structured court verdict to the corresponding AITA-style badge:
 
 | Code | Meaning |
 |------|---------|
-| YTA 🫵 | You're The A**hole |
-| NTA ✅ | Not The A**hole |
-| ESH 💀 | Everyone Sucks Here |
-| INFO 🤔 | Not Enough Info |
-| NAH 🤷 | No A**holes Here |
+| YTA 🫵 | `The Court Declares: Guilty!` |
+| NTA ✅ | `The Court Declares: Not Guilty!` |
 
 ## ⚠️ Disclaimer
 

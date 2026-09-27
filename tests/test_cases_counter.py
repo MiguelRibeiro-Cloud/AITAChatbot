@@ -229,6 +229,7 @@ class ApiCounterIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(payload["casesHeard"], 9007199254740993)
         self.assertIsInstance(payload["casesHeard"], int)
+        self.assertEqual(set(payload), {"reply", "casesHeard"})
         self.assertEqual(calls["increment"], 1)
 
     def test_stream_success_increments_exactly_once(self):
@@ -242,6 +243,9 @@ class ApiCounterIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(calls["increment"], 1)
         self.assertIn('"casesHeard": 126', body)
+        self.assertNotIn('"debug"', body)
+        self.assertNotIn('"model"', body)
+        self.assertNotIn("first_chunk_shapes", body)
 
     def test_failed_model_request_does_not_increment(self):
         self.install_fake_shared_code(model_raises=True)
@@ -268,7 +272,7 @@ class ApiCounterIntegrationTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 500)
         self.assertEqual(payload["error"], "The request could not be completed.")
-        self.assertEqual(payload["debug"]["stage"], "genai_call")
+        self.assertEqual(set(payload), {"error"})
         self.assertNotIn("provider failed", body)
         self.assertNotIn("super-secret", body)
         self.assertNotIn("/tmp/private/path", body)
@@ -286,7 +290,10 @@ class ApiCounterIntegrationTests(unittest.TestCase):
         body = response.get_body().decode()
 
         self.assertEqual(response.status_code, 500)
-        self.assertIn('"message": "The request could not be completed."', body)
+        self.assertIn('"error": "The request could not be completed."', body)
+        self.assertNotIn('"debug"', body)
+        self.assertNotIn('"model"', body)
+        self.assertNotIn("classified_kind", body)
         self.assertNotIn("provider failed", body)
         self.assertNotIn("super-secret", body)
         self.assertNotIn("/tmp/private/path", body)

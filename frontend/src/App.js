@@ -1,10 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import './App.css';
-
-const JUDGMENTS = [
-  "YTA 🫵", "NTA ✅", "ESH 💀", "INFO 🤔", "NAH 🤷",
-];
+import { getVerdictBadge } from './verdict';
 
 const PLACEHOLDERS = [
   "So I told my roommate their cooking smells like defeat...",
@@ -20,7 +17,7 @@ const PLACEHOLDERS = [
 const WELCOME_MESSAGES = [
   "Welcome to the Court of Chaotic Judgment! 🏛️⚖️",
   "Tell me your tale of possible a**holery and I shall render my TOTALLY unbiased verdict.",
-  "I'm powered by Gemma 3 — an AI with zero life experience but VERY strong opinions.",
+  "I'm powered by Google GenAI — an AI with zero life experience but VERY strong opinions.",
 ];
 
 const LOADING_QUIPS = [
@@ -237,8 +234,6 @@ function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeys);
   });
 
-  const getRandomJudgment = () => JUDGMENTS[Math.floor(Math.random() * JUDGMENTS.length)];
-
   const handleStop = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -345,7 +340,7 @@ function App() {
                   updated[updated.length - 1] = {
                     ...updated[updated.length - 1],
                     content: botContent,
-                    judgment: getRandomJudgment(),
+                    judgment: getVerdictBadge(botContent),
                   };
                   return updated;
                 });
@@ -488,7 +483,7 @@ function App() {
             Am I The A**hole?
             <span className="title-emoji">🔥</span>
           </h1>
-          <p className="subtitle">AI-Powered Moral Judgment &bull; Powered by Gemma 3</p>
+          <p className="subtitle">AI-Powered Moral Judgment &bull; Powered by Google GenAI</p>
           <div className="header-badges">
             <div className={`status-badge ${connectionStatus}`}>
               <span className="status-dot"></span>
