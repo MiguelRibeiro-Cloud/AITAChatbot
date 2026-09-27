@@ -2,20 +2,14 @@ import json
 import logging
 import azure.functions as func
 from shared_code import (
-    COCONUT_FALLBACK,
-    MAX_OUTPUT_TOKENS,
-    MODEL_NAME,
     ProviderBusyError,
     ProviderTimeoutError,
     RequestValidationError,
-    SYSTEM_INSTRUCTION,
+    StructuredResponseError,
     build_contents,
     check_rate_limit,
     classify_genai_error,
-    clean_reply,
-    client,
-    extract_reply_text,
-    response_diagnostics,
+    generate_judgment,
     run_with_timeout,
     validate_chat_payload,
 )
@@ -25,7 +19,7 @@ CLIENT_ERROR_MESSAGE = "The request could not be completed."
 
 
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    """Send a message and get a response from the configured Gemma model."""
+    """Send a case and return a validated Judge ruling."""
     allowed, retry_after = check_rate_limit(req)
     if not allowed:
         return func.HttpResponse(
@@ -43,29 +37,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
         user_message, history = validate_chat_payload(data)
         contents = build_contents(history, user_message)
 
-        response = run_with_timeout(
-            lambda: client.models.generate_content(
-                model=MODEL_NAME,
-                contents=contents,
-                config={"max_output_tokens": MAX_OUTPUT_TOKENS, "system_instruction": SYSTEM_INSTRUCTION},
-            )
-        )
-
-        reply, empty_kind = extract_reply_text(response)
-        if empty_kind:
-            logging.warning(
-                "Empty GenAI response fallback used: model=%s empty_kind=%s diagnostics=%s",
-                MODEL_NAME,
-                empty_kind,
-                response_diagnostics(response),
-            )
-            reply = COCONUT_FALLBACK
-            return func.HttpResponse(
-                json.dumps({"reply": reply}),
-                mimetype="application/json",
-            )
-
-        reply = clean_reply(reply)
+        judgment = run_with_timeout(lambda: generate_judgment(contents))
 
         cases_heard = None
         try:
@@ -74,7 +46,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             logging.error("Cases-heard counter increment failed after successful chat: %s", counter_exc)
 
         return func.HttpResponse(
-            json.dumps({"reply": reply, "casesHeard": cases_heard}),
+            json.dumps({**judgment, "casesHeard": cases_heard}),
             mimetype="application/json",
         )
 
@@ -94,6 +66,8 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code = 504
         elif isinstance(e, ProviderBusyError):
             status_code = 503
+        elif isinstance(e, StructuredResponseError):
+            status_code = 502
         elif kind == "usage_limit":
             status_code = 429
         elif kind == "provider_high_demand":
