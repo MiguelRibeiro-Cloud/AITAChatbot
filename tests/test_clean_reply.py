@@ -86,6 +86,52 @@ class CleanReplyTests(unittest.TestCase):
             ),
         )
 
+    def test_removes_observed_self_correction_on_no_markdown_leak(self):
+        raw = (
+            "The Court Declares: Not Guilty!\n\n"
+            "Your neighbor's complaint has the structural integrity of a soggy breadstick.\n\n"
+            "The court sentences the lawn gnome to supervise all future negotiations.\n\n"
+            'Self-correction on "No markdown": The instructions say "Do not use bullet points,\n'
+            'dashes, numbered lists, or any markdown." Plain prose.\n\n'
+            "Let's go."
+        )
+
+        self.assertEqual(
+            shared_code.clean_reply(raw),
+            (
+                "The Court Declares: Not Guilty!\n\n"
+                "Your neighbor's complaint has the structural integrity of a soggy breadstick.\n\n"
+                "The court sentences the lawn gnome to supervise all future negotiations."
+            ),
+        )
+
+    def test_removes_self_correction_space_variant_and_system_prompt_commentary(self):
+        expected = (
+            "The Court Declares: Guilty!\n\n"
+            "The snack tribunal finds your alibi suspiciously covered in cheese dust."
+        )
+        leaked_suffixes = (
+            "Self correction: I should use plain prose.",
+            "Following the system instructions, I will now provide only the final answer.",
+            "I need to follow the system prompt before answering.",
+        )
+
+        for leaked_suffix in leaked_suffixes:
+            with self.subTest(leaked_suffix=leaked_suffix):
+                self.assertEqual(
+                    shared_code.clean_reply(f"{expected}\n\n{leaked_suffix}"),
+                    expected,
+                )
+
+    def test_removes_standalone_process_filler_without_matching_ordinary_words(self):
+        expected = (
+            "The Court Declares: Not Guilty!\n\n"
+            "The correction to the furniture instructions was legitimate courtroom evidence.\n\n"
+            "Let's go ask the guilty bookcase to apologize to the screws."
+        )
+
+        self.assertEqual(shared_code.clean_reply(f"{expected}\n\nLet's go."), expected)
+
     def test_removes_final_plan_even_without_word_count(self):
         raw = (
             "The Court Declares: Not Guilty!\n\n"
