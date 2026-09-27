@@ -24,18 +24,8 @@ from db import CounterConfigError, CounterDatabaseError, increment_cases_heard
 CLIENT_ERROR_MESSAGE = "The request could not be completed."
 
 
-def _debug_payload(stage, empty_kind=None, response_empty=None):
-    return {
-        "stage": stage,
-        "model": MODEL_NAME,
-        "response_text_empty": bool(response_empty) if response_empty is not None else None,
-        "chunks_empty": None,
-        "empty_kind": empty_kind,
-    }
-
-
 def main(req: func.HttpRequest) -> func.HttpResponse:
-    """Send a message and get a response from Gemma 3 12B."""
+    """Send a message and get a response from the configured Gemma model."""
     allowed, retry_after = check_rate_limit(req)
     if not allowed:
         return func.HttpResponse(
@@ -71,17 +61,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             )
             reply = COCONUT_FALLBACK
             return func.HttpResponse(
-                json.dumps(
-                    {
-                        "reply": reply,
-                        "model": MODEL_NAME,
-                        "debug": _debug_payload(
-                            stage="empty_response",
-                            empty_kind=empty_kind,
-                            response_empty=True,
-                        ),
-                    }
-                ),
+                json.dumps({"reply": reply}),
                 mimetype="application/json",
             )
 
@@ -94,13 +74,13 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             logging.error("Cases-heard counter increment failed after successful chat: %s", counter_exc)
 
         return func.HttpResponse(
-            json.dumps({"reply": reply, "model": MODEL_NAME, "casesHeard": cases_heard}),
+            json.dumps({"reply": reply, "casesHeard": cases_heard}),
             mimetype="application/json",
         )
 
     except RequestValidationError as e:
         return func.HttpResponse(
-            json.dumps({"error": str(e), "debug": _debug_payload(stage="validation")}),
+            json.dumps({"error": str(e)}),
             status_code=400,
             mimetype="application/json",
         )
@@ -124,10 +104,7 @@ def main(req: func.HttpRequest) -> func.HttpResponse:
             status_code = 502
 
         return func.HttpResponse(
-            json.dumps({
-                "error": CLIENT_ERROR_MESSAGE,
-                "debug": _debug_payload(stage="genai_call"),
-            }),
+            json.dumps({"error": CLIENT_ERROR_MESSAGE}),
             status_code=status_code,
             mimetype="application/json",
         )
