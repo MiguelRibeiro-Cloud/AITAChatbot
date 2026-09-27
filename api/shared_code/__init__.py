@@ -47,8 +47,8 @@ PROVIDER_MAX_CONCURRENCY = _positive_int_env(
 _provider_semaphore = threading.BoundedSemaphore(PROVIDER_MAX_CONCURRENCY)
 
 # System instruction — passed via config.system_instruction.
-# The verdict phrase appears only ONCE so clean_reply can reliably distinguish
-# instruction echoes (one occurrence) from real model output (last occurrence).
+# The verdict phrase appears only once so clean_reply can identify and normalize
+# the first verdict emitted by the model.
 SYSTEM_INSTRUCTION = (
     "You are Judge Chuckles, a pompous, lovable AI courtroom judge who delivers short, absurd verdicts.\n\n"
     "Your reply must have three parts: a verdict declaration, then two funny explanation paragraphs.\n\n"
@@ -67,8 +67,8 @@ SYSTEM_INSTRUCTION = (
 )
 
 # Short priming exchange injected into contents alongside system_instruction.
-# Deliberately avoids 'The Court Declares:' so clean_reply can use the LAST
-# verdict match as the real answer, even if the model echoes the instruction first.
+# Deliberately avoids 'The Court Declares:' so the priming exchange cannot be
+# mistaken for the model's verdict.
 _PRIMING_INSTRUCTION = (
     "You play Judge Chuckles, a silly AI judge. "
     "Open each reply with a one-line guilty-or-not verdict declaration, "
@@ -212,13 +212,23 @@ def run_with_timeout(fn):
         _provider_semaphore.release()
 
 # Matches a complete verdict declaration in either guilty or not-guilty form.
-# More specific than 'The Court Declares:' alone, which can appear twice inside
-# an echoed instruction and cause the old first-match strategy to clip mid-phrase.
-_VERDICT_RE = re.compile(r'The Court Declares:\s*(?:Not\s+)?Guilty!', re.IGNORECASE)
+_VERDICT_RE = re.compile(
+    r'The Court Declares:\s*(?P<not_guilty>Not\s+)?Guilty!',
+    re.IGNORECASE,
+)
+
+# Explicit paragraph labels make the intended prose unambiguous even when the
+# model surrounds it with drafting commentary. Only the labelled line itself is
+# captured so unrelated lines before, between, or after the paragraphs cannot
+# leak into the public response.
+_LABELLED_PARAGRAPH_RE = re.compile(
+    r'^[ \t]*(?:Para(?:graph)?)[ \t]*([12])[ \t]*:[ \t]*(\S.*?)[ \t]*$',
+    re.IGNORECASE | re.MULTILINE,
+)
 
 # Signals the model is showing a second draft or internal planning that leaked out.
 _REDRAFT_RE = re.compile(
-    r'\n+(?:Verdict:\s|Content:\s|User question:|Role:\s|'
+    r'(?:^|\n+)(?:Verdict:\s|Content:\s|User question:|Role:\s|'
     r'Constraint\s*\d*[: ]|Plain prose|Hard rules|Output format|'
     r'\(?Word count\b|Checking\s+[\'"`]|(?:Final\s+)?Plan\s*:|'
     r'Self-check\s*:|Self[- ]correction(?:\s+on\s+[^\n:]{1,120})?\s*:|'
@@ -235,31 +245,12 @@ _REDRAFT_RE = re.compile(
 _PROCESS_FILLER_LINE_RE = re.compile(r"let['’]s\s+go[.!]?", re.IGNORECASE)
 
 
-def _select_verdict_match(text, matches):
-    """Return the last verdict declaration that starts its own line."""
-    for match in reversed(matches):
-        line_start = text.rfind("\n", 0, match.start()) + 1
-        if not text[line_start:match.start()].strip():
-            return match
-    return matches[-1]
-
-
-def _select_reply_start(text, matches):
-    leak = _REDRAFT_RE.search(text)
-    eligible = matches
-    if leak:
-        before_leak = [match for match in matches if match.start() < leak.start()]
-        if before_leak:
-            eligible = before_leak
-    return _select_verdict_match(text, eligible)
-
-
 def build_contents(history, user_message):
     """Build contents with a short priming exchange that avoids the verdict phrase.
 
     Full persona rules go in config.system_instruction. The priming exchange gives
-    an extra behavioral cue without containing 'The Court Declares:', so
-    clean_reply can always locate the real verdict via the last regex match.
+    an extra behavioral cue without containing 'The Court Declares:', so it cannot
+    be mistaken for the model's first verdict.
     """
     contents = [
         {"role": "user", "parts": [{"text": _PRIMING_INSTRUCTION}]},
@@ -272,50 +263,76 @@ def build_contents(history, user_message):
     return contents
 
 
-def clean_reply(text: str) -> str:
-    """Trim everything outside the actual verdict.
+def _clean_lines(text):
+    """Apply the existing conservative line cleanup."""
+    lines = []
+    for line in text.strip().splitlines():
+        line = line.lstrip()
+        line = re.sub(r'^[-*\u2022]\s+', '', line)
+        line = re.sub(r'^\d+[.)\s]\s*', '', line)
+        if not _PROCESS_FILLER_LINE_RE.fullmatch(line.strip()):
+            lines.append(line)
+    return "\n".join(lines).rstrip()
 
-    Uses the last complete verdict match before any planning-leak marker as the
-    real answer start. If no marker appears first, this still handles instruction
-    echoes by taking the last verdict match. Then cuts at re-draft / planning-leak
-    markers and a second verdict declaration (model looping).
-    """
+
+def _canonical_verdict(match):
+    if match.group("not_guilty"):
+        return "The Court Declares: Not Guilty!"
+    return "The Court Declares: Guilty!"
+
+
+def _extract_labelled_paragraphs(text):
+    paragraph_one = None
+    for match in _LABELLED_PARAGRAPH_RE.finditer(text):
+        number, prose = match.groups()
+        if number == "1" and paragraph_one is None:
+            paragraph_one = prose.strip()
+        elif number == "2" and paragraph_one is not None:
+            return paragraph_one, prose.strip()
+    return None
+
+
+def clean_reply(text: str) -> str:
+    """Return one canonical verdict and two prose paragraphs when safe."""
+    if not isinstance(text, str):
+        return ""
+
     matches = list(_VERDICT_RE.finditer(text))
     if not matches:
-        def _clean_line(l):
-            l = l.lstrip()
-            l = re.sub(r'^[-*\u2022]\s+', '', l)
-            l = re.sub(r'^\d+[.)\s]\s*', '', l)
-            return l
-        lines = [_clean_line(l) for l in text.strip().splitlines()]
-        lines = [line for line in lines if not _PROCESS_FILLER_LINE_RE.fullmatch(line.strip())]
-        return "\n".join(lines).rstrip()
+        return _clean_lines(text)
 
-    last = _select_reply_start(text, matches)
-    clipped = text[last.start():]
+    verdict = matches[0]
+    canonical_verdict = _canonical_verdict(verdict)
+
+    # A verdict owns its line. Anything else on that line is process commentary,
+    # so structural extraction begins at the following line.
+    verdict_line_end = text.find("\n", verdict.end())
+    body = "" if verdict_line_end == -1 else text[verdict_line_end + 1:]
+
+    labelled = _extract_labelled_paragraphs(body)
+    if labelled:
+        return "\n\n".join((canonical_verdict, *labelled))
 
     # Cut at re-draft / planning-leak markers
-    redraft = _REDRAFT_RE.search(clipped)
+    redraft = _REDRAFT_RE.search(body)
     if redraft:
-        clipped = clipped[:redraft.start()]
+        body = body[:redraft.start()]
 
-    # Cut before a second verdict in the clipped portion (model looping)
-    first_end = last.end() - last.start()
-    second = _VERDICT_RE.search(clipped, first_end)
+    # Cut before a second verdict (model looping).
+    second = _VERDICT_RE.search(body)
     if second:
-        clipped = clipped[:second.start()]
+        body = body[:second.start()]
 
-    # Strip leading whitespace from every line so Markdown never renders
-    # indented text as a <pre> code block.
-    # Strip leading whitespace and markdown list markers from every line.
-    def _clean_line(l):
-        l = l.lstrip()
-        l = re.sub(r'^[-*\u2022]\s+', '', l)  # remove - / * / • list markers
-        l = re.sub(r'^\d+[.)\s]\s*', '', l)  # remove 1. / 1) numbered markers
-        return l
-    lines = [_clean_line(l) for l in clipped.strip().splitlines()]
-    lines = [line for line in lines if not _PROCESS_FILLER_LINE_RE.fullmatch(line.strip())]
-    return "\n".join(lines).rstrip()
+    cleaned_body = _clean_lines(body)
+    paragraphs = [part.strip() for part in re.split(r'\n\s*\n', cleaned_body) if part.strip()]
+    if len(paragraphs) >= 2:
+        return "\n\n".join((canonical_verdict, paragraphs[0], paragraphs[1]))
+
+    # Not enough structure to safely identify two paragraphs: retain the
+    # conservative historical result instead of inventing or dropping content.
+    if cleaned_body:
+        return f"{canonical_verdict}\n\n{cleaned_body}"
+    return canonical_verdict
 
 
 def extract_reply_text(response):

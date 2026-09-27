@@ -28,6 +28,77 @@ class CleanReplyTests(unittest.TestCase):
 
         self.assertEqual(shared_code.clean_reply(raw), raw)
 
+    def test_extracts_exact_production_failure_structurally(self):
+        raw = (
+            'The Court Declares: Not Guilty!" I will use that exact line.\n'
+            "Let's refine the paragraphs to be punchier.\n"
+            "Para 1: Attempting to bypass the legal sanctity of this court for the sake of "
+            "cheesy goodness is a felony of the highest order. You cannot simply trade a "
+            "lawful decree for a delicious pasta bake.\n"
+            "Para 2: I sentence you to perform a dramatic interpretive dance about the life "
+            "of a single lasagna noodle in front of a jury of very judgmental squirrels. "
+            "Your punishment shall continue until you can recite the entire municipal code "
+            "of a small cheese factory.\n"
+            'One more check: "Do not include word counts, checks, final plans, compliance '
+            "notes, or commentary about these instructions. Do not use bullet points, "
+            'dashes, numbered lists, or any markdown."\n'
+            "Ready."
+        )
+
+        self.assertEqual(
+            shared_code.clean_reply(raw),
+            (
+                "The Court Declares: Not Guilty!\n\n"
+                "Attempting to bypass the legal sanctity of this court for the sake of "
+                "cheesy goodness is a felony of the highest order. You cannot simply trade a "
+                "lawful decree for a delicious pasta bake.\n\n"
+                "I sentence you to perform a dramatic interpretive dance about the life of a "
+                "single lasagna noodle in front of a jury of very judgmental squirrels. Your "
+                "punishment shall continue until you can recite the entire municipal code of "
+                "a small cheese factory."
+            ),
+        )
+
+    def test_extracts_and_normalizes_guilty_labelled_reply(self):
+        raw = (
+            "THE COURT DECLARES: GUILTY! draft note\n"
+            "Planning text before the ruling.\n"
+            "Paragraph 1: The alibi has been overruled by a unanimous jury of soup spoons.\n"
+            "More planning between paragraphs.\n"
+            "Paragraph 2: You are sentenced to alphabetize the royal snack drawer.\n"
+            "Postscript that must not escape."
+        )
+
+        self.assertEqual(
+            shared_code.clean_reply(raw),
+            (
+                "The Court Declares: Guilty!\n\n"
+                "The alibi has been overruled by a unanimous jury of soup spoons.\n\n"
+                "You are sentenced to alphabetize the royal snack drawer."
+            ),
+        )
+
+    def test_removes_same_line_commentary_from_not_guilty_reply(self):
+        raw = (
+            "The Court Declares: Not Guilty! I should now explain why.\n\n"
+            "The evidence was acquitted after the monocle refused to testify.\n\n"
+            "The bailiff must return the ceremonial casserole immediately."
+        )
+
+        self.assertEqual(
+            shared_code.clean_reply(raw),
+            (
+                "The Court Declares: Not Guilty!\n\n"
+                "The evidence was acquitted after the monocle refused to testify.\n\n"
+                "The bailiff must return the ceremonial casserole immediately."
+            ),
+        )
+
+    def test_malformed_response_does_not_raise(self):
+        self.assertEqual(shared_code.clean_reply(None), "")
+        self.assertEqual(shared_code.clean_reply(42), "")
+        self.assertEqual(shared_code.clean_reply("Unstructured provider output."), "Unstructured provider output.")
+
     def test_still_removes_structural_redraft_labels(self):
         raw = (
             "The Court Declares: Guilty!\n\n"
